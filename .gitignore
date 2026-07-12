@@ -1,0 +1,21 @@
+node_modules/
+dist/
+build/
+*.log
+.env
+.env.local
+.DS_Store
+Thumbs.db
+
+# workspace build outputs
+shared/dist/
+server/dist/
+client/dist/
+
+# runtime
+data/
+uploads/
+
+# tooling / local
+.claude/
+*.tsbuildinfo
