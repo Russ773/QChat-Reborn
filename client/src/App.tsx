@@ -3,6 +3,7 @@ import type { ChatEvent } from './types.js';
 import { postAnnouncement } from './api.js';
 import { Avatar } from './components/Avatar.js';
 import { EmojiPicker } from './components/EmojiPicker.js';
+import { LogoMark, Wordmark } from './components/Logo.js';
 import { Message } from './components/Message.js';
 import { MediaPanel } from './components/MediaPanel.js';
 import { MiniProfile } from './components/MiniProfile.js';
@@ -86,10 +87,15 @@ export default function App() {
 
       <aside className="sidebar">
         <div className="brand">
-          QChat <span className="brand-dim">Reborn</span>
+          <LogoMark size={30} />
+          <Wordmark />
         </div>
 
-        <div className="profile-chip">
+        <div
+          className={`profile-chip ${state.token ? 'editable' : ''}`}
+          onClick={state.token ? () => setEditing(true) : undefined}
+          title={state.token ? 'Edit your profile' : undefined}
+        >
           <Avatar name={state.nick} src={myProfile?.avatar} size={34} />
           <div className="profile-meta">
             <span className="profile-nick">{myProfile?.displayName || state.nick}</span>
@@ -98,40 +104,63 @@ export default function App() {
               {state.account ? `✓ ${state.account}` : (STATUS_LABEL[status] ?? status)}
             </span>
           </div>
-          {state.token && (
-            <button className="chip-edit" title="Edit profile" onClick={() => setEditing(true)}>
-              ✎
-            </button>
+          {state.token ? (
+            <span className="chip-edit" aria-hidden="true">
+              ✎ Edit
+            </span>
+          ) : (
+            <span className="chip-guest" title="Log in with a registered account to create a profile">
+              guest
+            </span>
           )}
         </div>
+        {!state.token && (
+          <p className="profile-hint">
+            You’re browsing as a guest. Reconnect and choose “Log in with a registered account” to
+            create a profile.
+          </p>
+        )}
 
         <JoinBox onJoin={irc.join} />
 
         <div className="nav-label">Channels</div>
         <nav className="buffers">
-          {state.buffers.map((buf) => {
-            const isServer = buf === irc.serverBuffer;
-            const ch = state.channels[buf];
-            const label = isServer ? 'server' : (ch?.name ?? buf).replace(/^#/, '');
-            return (
-              <button
-                key={buf}
-                className={`buffer ${active === buf ? 'active' : ''}`}
-                onClick={() => irc.setActive(buf)}
-              >
-                <span className="buffer-hash">{isServer ? '✦' : '#'}</span>
-                <span className="buffer-name">{label}</span>
-                {ch && ch.unread > 0 && <span className="badge">{ch.unread}</span>}
-              </button>
-            );
-          })}
+          {state.buffers.filter((b) => b !== irc.serverBuffer).length === 0 && (
+            <p className="buffers-empty">Join a channel above to start chatting.</p>
+          )}
+          {state.buffers
+            .filter((b) => b !== irc.serverBuffer)
+            .map((buf) => {
+              const ch = state.channels[buf];
+              const label = (ch?.name ?? buf).replace(/^#/, '');
+              return (
+                <button
+                  key={buf}
+                  className={`buffer ${active === buf ? 'active' : ''}`}
+                  onClick={() => irc.setActive(buf)}
+                >
+                  <span className="buffer-hash">#</span>
+                  <span className="buffer-name">{label}</span>
+                  {ch && ch.unread > 0 && <span className="badge">{ch.unread}</span>}
+                </button>
+              );
+            })}
         </nav>
 
-        {isAdmin && (
-          <button className="admin-announce-btn" onClick={() => setAnnouncing(true)}>
-            📢 Post announcement
+        <div className="sidebar-footer">
+          {isAdmin && (
+            <button className="admin-announce-btn" onClick={() => setAnnouncing(true)}>
+              📢 Post announcement
+            </button>
+          )}
+          <button
+            className={`console-btn ${active === irc.serverBuffer ? 'active' : ''}`}
+            onClick={() => irc.setActive(irc.serverBuffer)}
+            title="Raw server messages and system log"
+          >
+            <span className="console-icon">›_</span> Server console
           </button>
-        )}
+        </div>
       </aside>
 
       <main className="main">
@@ -189,7 +218,15 @@ export default function App() {
             </div>
           </>
         ) : (
-          <ServerView events={state.serverLog} />
+          <>
+            <header className="chan-head">
+              <div className="chan-title">
+                <span className="chan-name">Server console</span>
+                <span className="chan-meta">raw server messages and system log</span>
+              </div>
+            </header>
+            <ServerView events={state.serverLog} />
+          </>
         )}
       </main>
 
@@ -326,10 +363,13 @@ function Connect({ onConnect }: { onConnect: (nick: string, creds?: LoginCreds) 
   return (
     <div className="connect">
       <form onSubmit={submit}>
-        <h1>
-          QChat <span className="brand-dim">Reborn</span>
-        </h1>
-        <p className="tagline">IRC, reborn — with a shared watch party built in.</p>
+        <div className="connect-brand">
+          <LogoMark size={72} />
+          <h1>
+            <Wordmark />
+          </h1>
+        </div>
+        <p className="tagline">Media webchat, reborn.</p>
         <input
           autoFocus
           value={nick}

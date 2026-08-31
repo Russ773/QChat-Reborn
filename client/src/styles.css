@@ -167,10 +167,26 @@ button:active {
   overflow: hidden;
 }
 .brand {
-  font-size: 1.35rem;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 2px 4px;
+}
+.wordmark {
+  font-size: 1.3rem;
   font-weight: 800;
   letter-spacing: -0.02em;
-  padding: 0 6px;
+}
+.logo-mark {
+  flex: 0 0 auto;
+  filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.35));
+}
+.connect-brand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 2px;
 }
 
 .profile-chip {
@@ -799,21 +815,86 @@ button:active {
 .profile-chip {
   position: relative;
 }
+.profile-chip.editable {
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.profile-chip.editable:hover {
+  background: var(--bg-3);
+  border-color: var(--accent);
+}
 .chip-edit {
+  margin-left: auto;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  background: var(--bg-3);
+  border-radius: 10px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+.profile-chip.editable:hover .chip-edit {
+  color: var(--accent);
+}
+.chip-guest {
+  margin-left: auto;
+  font-size: 0.66rem;
+  color: var(--text-faint);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  padding: 1px 7px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.profile-hint {
+  margin: 2px 4px 0;
+  font-size: 0.75rem;
+  color: var(--text-faint);
+  line-height: 1.4;
+}
+.buffers-empty {
+  color: var(--text-faint);
+  font-size: 0.82rem;
+  padding: 8px 10px;
+  margin: 0;
+}
+.sidebar-footer {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 6px;
+}
+.console-btn {
   background: transparent;
   color: var(--text-dim);
-  border: 0;
-  padding: 4px 6px;
-  font-size: 0.95rem;
-  margin-left: auto;
+  border: 1px solid var(--border-soft);
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  font-size: 0.85rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
-.chip-edit:hover {
-  color: var(--accent);
+.console-btn:hover {
+  background: var(--bg-3);
+  color: var(--text);
   filter: none;
+}
+.console-btn.active {
+  background: var(--bg-3);
+  color: var(--text);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.console-icon {
+  font-family: ui-monospace, monospace;
+  font-weight: 700;
+  color: var(--accent);
 }
 
 .admin-announce-btn {
-  margin-top: auto;
   background: var(--bg-3);
   color: var(--text);
   border: 1px solid var(--border);
