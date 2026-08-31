@@ -31,13 +31,15 @@ if (is_post()) {
         }
     }
 
-    // Profile fields.
+    // Profile fields. profile_html is sanitised inside save_profile().
     save_profile($acct, [
         'display_name' => post('display_name'),
         'pronouns' => post('pronouns'),
         'status' => post('status'),
         'bio' => post('bio'),
         'links' => post('links'),
+        'accent' => post('accent'),
+        'profile_html' => (string) ($_POST['profile_html'] ?? ''),
     ]);
 
     if (!$errors) {
@@ -83,7 +85,48 @@ require __DIR__ . '/templates/header.php';
     <label>Links (one per line)
       <textarea name="links" rows="3" placeholder="https://..."><?= e($p['links'] ?? '') ?></textarea>
     </label>
+    <label>Accent colour
+      <input type="color" name="accent" value="<?= e($p['accent'] ?? '#7c8cff') ?>">
+    </label>
+
+    <div class="pe-custom">
+      <div class="pe-custom-label">Custom profile page</div>
+      <p class="sub">Make it yours: colours, formatting, emojis and images. Anything unsafe is stripped automatically when you save.</p>
+      <div class="qc-editor-wrap" data-csrf="<?= e(csrf_token()) ?>" data-upload="/profile_image.php">
+        <div class="qc-toolbar">
+          <button type="button" data-cmd="bold" title="Bold"><b>B</b></button>
+          <button type="button" data-cmd="italic" title="Italic"><i>I</i></button>
+          <button type="button" data-cmd="underline" title="Underline"><u>U</u></button>
+          <button type="button" data-cmd="strikeThrough" title="Strikethrough"><s>S</s></button>
+          <span class="qc-sep"></span>
+          <button type="button" data-cmd="formatBlock" data-value="h2" title="Heading">H2</button>
+          <button type="button" data-cmd="formatBlock" data-value="h3" title="Subheading">H3</button>
+          <button type="button" data-cmd="formatBlock" data-value="blockquote" title="Quote">&#10077;</button>
+          <button type="button" data-cmd="insertUnorderedList" title="Bullet list">&bull;</button>
+          <button type="button" data-cmd="insertOrderedList" title="Numbered list">1.</button>
+          <span class="qc-sep"></span>
+          <label class="qc-color" title="Text colour"><span>A</span><input type="color" data-cmd="foreColor" value="#7c8cff"></label>
+          <label class="qc-color" title="Highlight"><span>&#9608;</span><input type="color" data-cmd="hiliteColor" value="#fff3a0"></label>
+          <span class="qc-sep"></span>
+          <button type="button" data-action="link" title="Insert link">&#128279;</button>
+          <button type="button" data-action="image" title="Insert image">&#128444;&#65039;</button>
+          <select data-action="emoji" title="Insert emoji" class="qc-emoji">
+            <option value="">&#128512;</option>
+            <?php foreach (['😀','😎','😍','😂','🥳','😇','🤔','😴','👍','🙏','🔥','✨','⭐','❤️','💜','🎵','🎮','🍕','☕','🌈'] as $em): ?>
+              <option value="<?= e($em) ?>"><?= e($em) ?></option>
+            <?php endforeach; ?>
+          </select>
+          <span class="qc-sep"></span>
+          <button type="button" data-cmd="removeFormat" title="Clear formatting">Clear</button>
+        </div>
+        <div class="qc-editor" contenteditable="true"><?= sanitize_profile_html($p['profile_html'] ?? '') ?></div>
+        <textarea name="profile_html" hidden><?= e($p['profile_html'] ?? '') ?></textarea>
+        <input type="file" class="qc-image-input" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+      </div>
+    </div>
+
     <button type="submit">Save profile</button>
   </form>
 </div>
+<script src="/assets/profile-editor.js"></script>
 <?php require __DIR__ . '/templates/footer.php'; ?>

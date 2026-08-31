@@ -5,6 +5,7 @@ import { Avatar } from './components/Avatar.js';
 import { EmojiPicker } from './components/EmojiPicker.js';
 import { LogoMark, Wordmark } from './components/Logo.js';
 import { Message } from './components/Message.js';
+import { ChannelBrowser } from './components/ChannelBrowser.js';
 import { MediaPanel } from './components/MediaPanel.js';
 import { MiniProfile } from './components/MiniProfile.js';
 import { ProfileEditor } from './components/ProfileEditor.js';
@@ -36,7 +37,13 @@ export default function App() {
   const [target, setTarget] = useState<ProfileTarget | null>(null);
   const [editing, setEditing] = useState(false);
   const [announcing, setAnnouncing] = useState(false);
+  const [browsing, setBrowsing] = useState(false);
   const [dismissedAnn, setDismissedAnn] = useState<string | null>(null);
+
+  const openBrowser = () => {
+    setBrowsing(true);
+    irc.listChannels();
+  };
 
   // Load our own profile once logged in.
   useEffect(() => {
@@ -122,6 +129,10 @@ export default function App() {
         )}
 
         <JoinBox onJoin={irc.join} />
+
+        <button className="browse-btn" onClick={openBrowser}>
+          🧭 Browse all channels
+        </button>
 
         <div className="nav-label">Channels</div>
         <nav className="buffers">
@@ -252,6 +263,15 @@ export default function App() {
       )}
       {announcing && state.token && (
         <AdminAnnounce token={state.token} onClose={() => setAnnouncing(false)} />
+      )}
+      {browsing && (
+        <ChannelBrowser
+          items={state.channelList.items}
+          loading={state.channelList.loading}
+          joined={new Set(state.buffers.filter((b) => b !== irc.serverBuffer))}
+          onJoin={irc.join}
+          onClose={() => setBrowsing(false)}
+        />
       )}
     </div>
   );
@@ -404,7 +424,7 @@ function Connect({ onConnect }: { onConnect: (nick: string, creds?: LoginCreds) 
 }
 
 function JoinBox({ onJoin }: { onJoin: (channel: string) => void }) {
-  const [name, setName] = useState('general');
+  const [name, setName] = useState('lobby');
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = name.trim();

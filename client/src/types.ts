@@ -44,6 +44,13 @@ export interface WhoisInfo {
   loading: boolean;
 }
 
+/** One row of the channel browser (from RPL_LIST / 322). */
+export interface ChannelListItem {
+  name: string;
+  users: number;
+  topic: string;
+}
+
 export interface AppState {
   nick: string;
   /** NickServ account once SASL login succeeds (#9), else null. */
@@ -62,4 +69,6 @@ export interface AppState {
   serverLog: ChatEvent[];
   /** WHOIS results keyed by lowercased nick. */
   whois: Record<string, WhoisInfo>;
+  /** Channel browser results (from /LIST). */
+  channelList: { items: ChannelListItem[]; loading: boolean };
 }

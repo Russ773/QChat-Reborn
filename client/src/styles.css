@@ -1056,3 +1056,113 @@ button.secondary:hover {
   background: var(--bg-hover);
   background-clip: padding-box;
 }
+
+/* --- Browse channels button + mini-profile link ---------------------------- */
+.browse-btn {
+  background: var(--bg-3);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  border-radius: var(--r);
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-align: left;
+}
+.browse-btn:hover {
+  background: var(--bg-hover);
+  filter: none;
+}
+.mp-fullprofile {
+  flex: 1;
+  padding: 8px;
+  border-radius: var(--r-sm);
+  font-size: 0.85rem;
+  text-align: center;
+  background: var(--bg-3);
+  color: var(--text);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mp-fullprofile:hover {
+  background: var(--bg-hover);
+}
+
+/* --- Channel browser ------------------------------------------------------- */
+.channel-browser {
+  width: min(560px, 94vw);
+}
+.cb-search {
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 9px 11px;
+  border-radius: var(--r-sm);
+  font: inherit;
+}
+.cb-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 52vh;
+  overflow-y: auto;
+  margin: 2px -4px;
+  padding: 0 4px;
+}
+.cb-empty {
+  color: var(--text-faint);
+  text-align: center;
+  padding: 22px 0;
+}
+.cb-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r);
+}
+.cb-main {
+  flex: 1;
+  min-width: 0;
+}
+.cb-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 650;
+}
+.cb-hash {
+  color: var(--text-faint);
+}
+.cb-users {
+  margin-left: 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-dim);
+  background: var(--bg-3);
+  border-radius: 10px;
+  padding: 1px 8px;
+}
+.cb-topic {
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-join {
+  flex: 0 0 auto;
+  padding: 7px 16px;
+  border-radius: var(--r-sm);
+  font-size: 0.85rem;
+}
+.cb-join:disabled {
+  background: var(--bg-3);
+  color: var(--text-faint);
+  filter: none;
+  cursor: default;
+}

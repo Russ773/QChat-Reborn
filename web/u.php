@@ -20,10 +20,11 @@ if (!$exists) {
 
 $display = !empty($p['display_name']) ? $p['display_name'] : $acct;
 $links = !empty($p['links']) ? preg_split('/\r\n|\r|\n/', $p['links']) : [];
+$accent = !empty($p['accent']) && preg_match('/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/', $p['accent']) ? $p['accent'] : null;
 $pageTitle = $display;
 require __DIR__ . '/templates/header.php';
 ?>
-<div class="card">
+<div class="card"<?= $accent ? ' style="--accent: ' . e($accent) . '"' : '' ?>>
   <div class="prof-head">
     <?php if (!empty($p['avatar'])): ?>
       <img class="avatar" src="<?= e($p['avatar']) ?>" alt="">
@@ -50,6 +51,10 @@ require __DIR__ . '/templates/header.php';
         <div><a href="<?= e($l) ?>" rel="noopener nofollow" target="_blank"><?= e($l) ?></a></div>
       <?php endforeach; ?></div>
     </div>
+  <?php endif; ?>
+
+  <?php if (!empty($p['profile_html'])): ?>
+    <div class="profile-custom"><?= sanitize_profile_html($p['profile_html']) ?></div>
   <?php endif; ?>
 
   <div class="prof-row"><span></span><div><a class="btn secondary" href="/chat">Find <?= e($display) ?> in the chat</a></div></div>

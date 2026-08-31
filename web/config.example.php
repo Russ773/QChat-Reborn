@@ -28,6 +28,11 @@ return [
     'avatar_url' => '/avatars',
     'avatar_max_bytes' => 1048576, // 1 MiB
 
+    // Profile images embedded in custom profiles (writable, served at /profile-media/).
+    'profile_media_dir' => __DIR__ . '/profile-media',
+    'profile_media_url' => '/profile-media',
+    'profile_image_max_bytes' => 3145728, // 3 MiB
+
     // Password-reset email (PHPMailer or PHP mail()). Set from a real address.
     'mail' => [
         'from' => 'no-reply@qchat.co.uk',

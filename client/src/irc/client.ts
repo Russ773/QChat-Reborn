@@ -185,6 +185,10 @@ export class IrcClient {
     this.sendRaw({ command: 'WHOIS', params: [nick] });
   }
 
+  list(): void {
+    this.sendRaw({ command: 'LIST', params: [] });
+  }
+
   media(channel: string, event: MediaClientEvent): void {
     this.sendRaw({ command: 'MEDIA', params: [channel, encodeMediaEvent(event)] });
   }

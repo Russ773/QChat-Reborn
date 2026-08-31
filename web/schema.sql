@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS profiles (
   bio           TEXT         DEFAULT NULL,
   links         TEXT         DEFAULT NULL,          -- one URL per line
   avatar        VARCHAR(255) DEFAULT NULL,          -- path under /avatars/
+  accent        VARCHAR(9)   DEFAULT NULL,          -- accent colour, e.g. #7c8cff
+  profile_html  MEDIUMTEXT   DEFAULT NULL,          -- sanitised custom profile markup
   created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (account_lower)
@@ -56,3 +58,10 @@ CREATE TABLE IF NOT EXISTS accounts (
 
 -- Seed the first admin. Change 'russ' if your account name differs.
 INSERT IGNORE INTO roles (account_lower, role) VALUES ('russ', 'admin');
+
+-- ---------------------------------------------------------------------------
+-- Migration for an EXISTING database (safe to run once; ignore "duplicate
+-- column" errors if you have already applied it). phpMyAdmin: paste into SQL.
+-- ---------------------------------------------------------------------------
+-- ALTER TABLE profiles ADD COLUMN accent VARCHAR(9) DEFAULT NULL AFTER avatar;
+-- ALTER TABLE profiles ADD COLUMN profile_html MEDIUMTEXT DEFAULT NULL AFTER accent;

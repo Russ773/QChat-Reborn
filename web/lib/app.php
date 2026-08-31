@@ -23,11 +23,18 @@ function get_profile(string $account): ?array
 function save_profile(string $account, array $f): void
 {
     $links = trim((string) ($f['links'] ?? ''));
-    $sql = 'INSERT INTO profiles (account_lower, account, display_name, pronouns, status, bio, links)
-            VALUES (:al, :a, :dn, :pr, :st, :bio, :lnk)
+    // Always sanitise custom HTML here so it can never be stored raw, whatever
+    // the caller passed. An empty/whitespace result clears the custom section.
+    $html = sanitize_profile_html((string) ($f['profile_html'] ?? ''));
+    $accent = qc_valid_accent($f['accent'] ?? null);
+
+    $sql = 'INSERT INTO profiles
+              (account_lower, account, display_name, pronouns, status, bio, links, accent, profile_html)
+            VALUES (:al, :a, :dn, :pr, :st, :bio, :lnk, :acc, :html)
             ON DUPLICATE KEY UPDATE
               display_name = VALUES(display_name), pronouns = VALUES(pronouns),
-              status = VALUES(status), bio = VALUES(bio), links = VALUES(links)';
+              status = VALUES(status), bio = VALUES(bio), links = VALUES(links),
+              accent = VALUES(accent), profile_html = VALUES(profile_html)';
     db()->prepare($sql)->execute([
         ':al' => mb_strtolower($account),
         ':a' => $account,
@@ -36,7 +43,46 @@ function save_profile(string $account, array $f): void
         ':st' => mb_substr(trim((string) ($f['status'] ?? '')), 0, 120) ?: null,
         ':bio' => mb_substr(trim((string) ($f['bio'] ?? '')), 0, 300) ?: null,
         ':lnk' => $links !== '' ? $links : null,
+        ':acc' => $accent,
+        ':html' => $html !== '' ? $html : null,
     ]);
+}
+
+/** Validate an accent colour: a #rgb / #rrggbb hex string, else null. */
+function qc_valid_accent($value): ?string
+{
+    $v = trim((string) $value);
+    return preg_match('/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/', $v) ? $v : null;
+}
+
+/**
+ * Store an uploaded profile image and return its same-origin URL path.
+ * Returns [url] on success or [null, error] on failure.
+ */
+function save_profile_image(string $account, array $file): array
+{
+    global $CONFIG;
+    $allowed = ['image/png' => 'png', 'image/jpeg' => 'jpg', 'image/webp' => 'webp', 'image/gif' => 'gif'];
+
+    if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK || !is_uploaded_file($file['tmp_name'] ?? '')) {
+        return [null, 'No file uploaded.'];
+    }
+    if ($file['size'] > ($CONFIG['profile_image_max_bytes'] ?? 3145728)) {
+        return [null, 'Image is too large.'];
+    }
+    $mime = mime_content_type($file['tmp_name']);
+    if (!isset($allowed[$mime])) {
+        return [null, 'Image must be PNG, JPG, WebP or GIF.'];
+    }
+
+    $safeAcct = preg_replace('/[^a-z0-9_-]/', '_', mb_strtolower($account));
+    $dir = rtrim($CONFIG['profile_media_dir'], '/') . '/' . $safeAcct;
+    @mkdir($dir, 0755, true);
+    $name = bin2hex(random_bytes(8)) . '.' . $allowed[$mime];
+    if (!move_uploaded_file($file['tmp_name'], $dir . '/' . $name)) {
+        return [null, 'Could not save the image.'];
+    }
+    return [rtrim($CONFIG['profile_media_url'], '/') . '/' . $safeAcct . '/' . $name, null];
 }
 
 function set_avatar(string $account, string $urlPath): void

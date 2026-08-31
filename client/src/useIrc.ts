@@ -32,6 +32,7 @@ type Action =
   | { type: 'setAuth'; token: string; account: string; roles: string[] }
   | { type: 'announcement'; announcement: Announcement }
   | { type: 'system'; text: string }
+  | { type: 'listReset' }
   | { type: 'reset' };
 
 function initialState(nick: string): AppState {
@@ -46,6 +47,7 @@ function initialState(nick: string): AppState {
     active: SERVER_BUFFER,
     serverLog: [makeEvent('system', 'Connecting…')],
     whois: {},
+    channelList: { items: [], loading: false },
   };
 }
 
@@ -137,6 +139,9 @@ function reducer(state: AppState, action: Action): AppState {
 
     case 'system':
       return pushServer(state, makeEvent('system', action.text));
+
+    case 'listReset':
+      return { ...state, channelList: { items: [], loading: true } };
 
     case 'localEcho': {
       const key = chanKey(action.channel);
@@ -319,6 +324,21 @@ function reduceIrc(state: AppState, message: IrcMessage): AppState {
       return nick ? patchWhois(state, nick, { loading: false }) : state;
     }
 
+    case '321':
+      // RPL_LISTSTART
+      return { ...state, channelList: { items: [], loading: true } };
+    case '322': {
+      // RPL_LIST: <me> <channel> <#users> :<topic>
+      const name = message.params[1];
+      if (!name) return state;
+      const users = Number(message.params[2]);
+      const item = { name, users: Number.isFinite(users) ? users : 0, topic: message.params[3] ?? '' };
+      return { ...state, channelList: { items: [...state.channelList.items, item], loading: true } };
+    }
+    case '323':
+      // RPL_LISTEND
+      return { ...state, channelList: { ...state.channelList, loading: false } };
+
     // Ignore common no-op numerics; surface everything else to the server log.
     case '002':
     case '003':
@@ -367,6 +387,7 @@ export interface UseIrc {
   setActive: (buffer: string) => void;
   changeNick: (nick: string) => void;
   whois: (nick: string) => void;
+  listChannels: () => void;
   serverBuffer: string;
 }
 
@@ -438,6 +459,11 @@ export function useIrc(): UseIrc {
     clientRef.current?.whois(nick);
   }, []);
 
+  const listChannels = useCallback(() => {
+    dispatch({ type: 'listReset' });
+    clientRef.current?.list();
+  }, []);
+
   const setActive = useCallback((buffer: string) => {
     dispatch({ type: 'setActive', buffer });
   }, []);
@@ -446,7 +472,7 @@ export function useIrc(): UseIrc {
   useEffect(() => {
     if (status === 'registered' && !autoJoinedRef.current) {
       autoJoinedRef.current = true;
-      clientRef.current?.join('#General');
+      clientRef.current?.join('#Lobby');
     }
   }, [status]);
 
@@ -466,6 +492,7 @@ export function useIrc(): UseIrc {
     setActive,
     changeNick,
     whois,
+    listChannels,
     serverBuffer: SERVER_BUFFER,
   };
 }

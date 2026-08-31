@@ -102,6 +102,16 @@ export function MiniProfile({ nick, info, profile, x, y, onClose, onMention }: P
         >
           Mention
         </button>
+        {info?.account && (
+          <a
+            className="mp-fullprofile"
+            href={`/u.php?a=${encodeURIComponent(info.account)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            View full profile ↗
+          </a>
+        )}
       </div>
     </div>
   );
