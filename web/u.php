@@ -18,7 +18,7 @@ $pageTitle = $display;
 require __DIR__ . '/templates/header.php';
 ?>
 <div class="card"<?= $accent ? ' style="--accent: ' . e($accent) . '"' : '' ?>>
-  <div class="prof-head">
+  <div class="prof-head prof-hero">
     <?php if (!empty($p['avatar'])): ?>
       <img class="avatar" src="<?= e($p['avatar']) ?>" alt="">
     <?php else: ?>

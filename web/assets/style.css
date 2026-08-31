@@ -75,6 +75,14 @@ button:hover, .btn:hover { filter: brightness(1.08); text-decoration: none; }
   width: 72px; height: 72px; border-radius: 50%; object-fit: cover; flex: 0 0 auto;
   display: grid; place-items: center; font-weight: 800; font-size: 1.6rem; color: #0b0f16;
 }
+/* Big hero header on the public profile page. */
+.prof-hero { flex-direction: column; text-align: center; gap: 16px; padding: 12px 0 22px; }
+.prof-hero .avatar {
+  width: 172px; height: 172px; font-size: 4.2rem;
+  box-shadow: 0 0 0 4px var(--bg-2), 0 0 0 8px var(--accent);
+}
+.prof-hero .prof-name { font-size: 2.2rem; }
+.prof-hero .prof-sub { font-size: 1.05rem; }
 .prof-name { font-size: 1.6rem; font-weight: 750; margin: 0; }
 .prof-sub { color: var(--text-dim); }
 .prof-row { display: flex; gap: 12px; padding: 8px 0; border-top: 1px solid var(--border-soft); }
