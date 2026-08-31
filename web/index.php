@@ -7,7 +7,7 @@ require __DIR__ . '/templates/header.php';
 <section class="hero">
   <img src="/assets/logo.svg" width="96" height="96" alt="QChat Reborn">
   <h1>QChat <span class="reborn">Reborn</span></h1>
-  <p>Media webchat, reborn.</p>
+  <p>Media Webchat, Reborn.</p>
   <div class="cta">
     <a class="btn" href="/chat">Open the chat</a>
     <?php if ($acct === null): ?>

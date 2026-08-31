@@ -4,11 +4,13 @@ import { colorForNick } from '../colors.js';
 
 interface Props {
   event: ChatEvent;
+  /** True when this message continues a run from the same author (hide header). */
+  grouped?: boolean;
   /** Invoked when a user clicks "add to queue" on a detected media link. */
   onEnqueue?: (url: string) => void;
 }
 
-export function Message({ event, onEnqueue }: Props) {
+export function Message({ event, grouped, onEnqueue }: Props) {
   const time = new Date(event.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   if (event.kind === 'announcement') {
@@ -52,12 +54,18 @@ export function Message({ event, onEnqueue }: Props) {
   }
 
   return (
-    <div className={`msg chat ${event.self ? 'self' : ''}`}>
-      <span className="ts">{time}</span>
-      <span className="nick" style={{ color: colorForNick(event.from ?? '') }}>
-        {event.from}
-      </span>
-      <span className="text">{renderText(event.text, onEnqueue)}</span>
+    <div className={`msg chat ${event.self ? 'self' : ''} ${grouped ? 'grouped' : ''}`}>
+      {!grouped && (
+        <div className="msg-head">
+          <span className="nick" style={{ color: colorForNick(event.from ?? '') }}>
+            {event.from}
+          </span>
+          <span className="ts">{time}</span>
+        </div>
+      )}
+      <div className="text" title={time}>
+        {renderText(event.text, onEnqueue)}
+      </div>
     </div>
   );
 }

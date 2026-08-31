@@ -490,6 +490,29 @@ button:active {
 .msg.chat:hover {
   background: var(--bg-1);
 }
+/* Chat messages are a block: name + time header, then the message underneath. */
+.msg.chat {
+  display: block;
+  padding: 1px 8px;
+}
+.msg.chat:not(.grouped) {
+  margin-top: 9px;
+}
+.msg-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 1px;
+}
+.msg-head .nick {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+.msg-head .ts {
+  color: var(--text-faint);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
 .msg .ts {
   color: var(--text-faint);
   font-size: 0.7rem;

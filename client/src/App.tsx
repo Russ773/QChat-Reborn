@@ -389,7 +389,7 @@ function Connect({ onConnect }: { onConnect: (nick: string, creds?: LoginCreds) 
             <Wordmark />
           </h1>
         </div>
-        <p className="tagline">Media webchat, reborn.</p>
+        <p className="tagline">Media Webchat, Reborn.</p>
         <input
           autoFocus
           value={nick}
@@ -478,9 +478,15 @@ function ChannelChat({
   return (
     <div className="chat">
       <div className="messages" ref={scrollerRef}>
-        {events.map((ev) => (
-          <Message key={ev.id} event={ev} onEnqueue={onEnqueue} />
-        ))}
+        {events.map((ev, i) => {
+          const prev = events[i - 1];
+          const grouped =
+            ev.kind === 'message' &&
+            prev?.kind === 'message' &&
+            prev.from === ev.from &&
+            ev.ts - prev.ts < 5 * 60 * 1000;
+          return <Message key={ev.id} event={ev} grouped={grouped} onEnqueue={onEnqueue} />;
+        })}
       </div>
       <form className="composer" onSubmit={submit}>
         <EmojiPicker
