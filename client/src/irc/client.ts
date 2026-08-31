@@ -40,12 +40,20 @@ export class IrcClient {
   private sasl: LoginCreds | null = null;
   private capReqSent = false;
 
+  // Nick-contention handling during registration.
+  private desiredNick = '';
+  private nickTries = 0;
+  private retryNickAfterSasl = false;
+
   constructor(handlers: IrcClientHandlers) {
     this.handlers = handlers;
   }
 
   connect(nick: string, creds?: LoginCreds, url = defaultWsUrl()): void {
     this.nick = nick;
+    this.desiredNick = nick;
+    this.nickTries = 0;
+    this.retryNickAfterSasl = false;
     this.account = null;
     this.sasl = creds ?? null;
     this.capReqSent = false;
@@ -94,6 +102,14 @@ export class IrcClient {
         break;
       case '903': // RPL_SASLSUCCESS
         this.handlers.onSasl?.(true, this.account ?? this.sasl?.account);
+        // Now identified: if our nick was held, ask services to release the
+        // hold and reclaim it. Falls back to an alternate nick if it's really
+        // taken (see the 433/437 handler).
+        if (this.retryNickAfterSasl) {
+          this.retryNickAfterSasl = false;
+          this.sendRaw({ command: 'PRIVMSG', params: ['NickServ', `RELEASE ${this.desiredNick}`] });
+          this.sendRaw({ command: 'NICK', params: [this.desiredNick] });
+        }
         this.endSasl();
         break;
       case '902': // nick locked
@@ -101,9 +117,26 @@ export class IrcClient {
       case '905': // ERR_SASLTOOLONG
       case '906': // ERR_SASLABORTED
         this.handlers.onSasl?.(false);
+        if (this.retryNickAfterSasl) {
+          this.retryNickAfterSasl = false;
+          this.sendRaw({ command: 'NICK', params: [this.altNick()] });
+        }
         this.endSasl();
         break;
+      case '432': // ERR_ERRONEUSNICKNAME
+      case '433': // ERR_NICKNAMEINUSE
+      case '437': // nick unavailable (e.g. "held for registered user")
+        if (this.status !== 'registered') {
+          if (this.sasl) {
+            // Nick likely held until we identify; retry it after SASL succeeds.
+            this.retryNickAfterSasl = true;
+          } else {
+            this.sendRaw({ command: 'NICK', params: [this.altNick()] });
+          }
+        }
+        break;
       case '001': // RPL_WELCOME
+        if (message.params[0]) this.nick = message.params[0];
         this.setStatus('registered');
         break;
       case 'QAUTH': // gateway: [token, account, rolesCsv]
@@ -151,7 +184,21 @@ export class IrcClient {
 
   private abortSasl(): void {
     this.handlers.onSasl?.(false);
+    if (this.retryNickAfterSasl) {
+      this.retryNickAfterSasl = false;
+      this.sendRaw({ command: 'NICK', params: [this.altNick()] });
+    }
     this.endSasl();
+  }
+
+  /** Pick the next fallback nick when the desired one is unavailable. */
+  private altNick(): string {
+    this.nickTries += 1;
+    const base = (this.desiredNick || 'guest').slice(0, 12);
+    const alt =
+      this.nickTries <= 4 ? base + '_'.repeat(this.nickTries) : base + Math.floor(Math.random() * 10000);
+    this.nick = alt;
+    return alt;
   }
 
   private setStatus(status: IrcClientStatus): void {

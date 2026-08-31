@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ChannelListItem } from '../types.js';
 
 interface Props {
@@ -11,6 +11,13 @@ interface Props {
 
 export function ChannelBrowser({ items, loading, joined, onJoin, onClose }: Props) {
   const [query, setQuery] = useState('');
+  const [timedOut, setTimedOut] = useState(false);
+
+  // Don't spin forever if the server never answers /LIST.
+  useEffect(() => {
+    const t = setTimeout(() => setTimedOut(true), 8000);
+    return () => clearTimeout(t);
+  }, []);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -41,8 +48,12 @@ export function ChannelBrowser({ items, loading, joined, onJoin, onClose }: Prop
         />
 
         <div className="cb-list">
-          {loading && filtered.length === 0 && <p className="cb-empty">Loading channels…</p>}
-          {!loading && filtered.length === 0 && <p className="cb-empty">No channels found.</p>}
+          {loading && !timedOut && filtered.length === 0 && (
+            <p className="cb-empty">Loading channels…</p>
+          )}
+          {(!loading || timedOut) && filtered.length === 0 && (
+            <p className="cb-empty">No channels to show.</p>
+          )}
           {filtered.map((c) => {
             const isJoined = joined.has(c.name.toLowerCase());
             return (

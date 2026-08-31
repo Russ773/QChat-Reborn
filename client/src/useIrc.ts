@@ -166,8 +166,13 @@ function reduceIrc(state: AppState, message: IrcMessage): AppState {
   const self = from === state.nick;
 
   switch (message.command) {
-    case '001':
-      return pushServer(state, makeEvent('system', message.params.at(-1) ?? 'Welcome'));
+    case '001': {
+      // The server tells us our final nick here (may differ from requested if
+      // it was taken and we fell back to an alternate).
+      const assigned = message.params[0];
+      const next = assigned && assigned !== state.nick ? { ...state, nick: assigned } : state;
+      return pushServer(next, makeEvent('system', message.params.at(-1) ?? 'Welcome'));
+    }
 
     case 'JOIN': {
       const name = message.params[0];
