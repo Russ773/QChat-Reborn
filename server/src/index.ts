@@ -11,6 +11,7 @@ import { WebSocketServer } from 'ws';
 import { handleApi, type ApiContext } from './api.js';
 import { AuthRegistry } from './auth.js';
 import { IrcGateway } from './gateway/gateway.js';
+import { BotPresence } from './identity/bot.js';
 import { handleInternalApi } from './identity/api.js';
 import { IdentityService } from './identity/identity.js';
 import { TcpConnection, WsConnection } from './ircd/connection.js';
@@ -76,13 +77,30 @@ if (gatewayMode) {
   );
   gatewayRef = gateway;
 
-  // Identity bridge for the PHP site (register / verify / reset via NickServ).
+  // Identity bridge for the PHP site (register / verify / reset via NickServ),
+  // plus a persistent bot presence that stays in the userlist.
   if (process.env.BOT_ACCOUNT && process.env.BOT_PASSWORD) {
-    identityRef = new IdentityService(
-      { ...upstreamOpts, botAccount: process.env.BOT_ACCOUNT, botPassword: process.env.BOT_PASSWORD },
+    const botAccount = process.env.BOT_ACCOUNT;
+    const botPassword = process.env.BOT_PASSWORD;
+    identityRef = new IdentityService({ ...upstreamOpts, botAccount, botPassword }, log);
+    log('identity bridge: enabled');
+
+    const botChannels = (process.env.BOT_CHANNELS ?? '#General')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const bot = new BotPresence(
+      {
+        ...upstreamOpts,
+        account: botAccount,
+        password: botPassword,
+        nick: process.env.BOT_NICK ?? botAccount,
+        channels: botChannels,
+      },
       log,
     );
-    log('identity bridge: enabled');
+    bot.start();
+    log(`bot presence: ${botAccount} joining ${botChannels.join(', ')}`);
   } else {
     log('identity bridge: disabled (set BOT_ACCOUNT / BOT_PASSWORD to enable)');
   }

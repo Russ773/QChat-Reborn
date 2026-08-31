@@ -145,8 +145,11 @@ export class IdentityService {
     return this.session<IdentityResult>({ ok: false, error: 'timed out' }, (conn, done) => {
       let capReqSent = false;
       let sentSaset = false;
+      // A distinct nick so we do not collide with the persistent bot; SASL still
+      // logs us into the QBot account, which is what grants the admin rights.
+      const nick = `${this.opts.botAccount}-r${Math.floor(Math.random() * 100000)}`;
       conn.send({ command: 'CAP', params: ['LS', '302'] });
-      conn.send({ command: 'NICK', params: [this.opts.botAccount] });
+      conn.send({ command: 'NICK', params: [nick] });
       conn.send({ command: 'USER', params: [this.opts.botAccount, '0', '*', 'qchat bot'] });
       return (msg) => {
         if (msg.command === 'CAP') {
