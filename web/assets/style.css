@@ -137,3 +137,29 @@ button:hover, .btn:hover { filter: brightness(1.08); text-decoration: none; }
 }
 .profile-custom ul, .profile-custom ol { padding-left: 1.4em; margin: 0.5em 0; }
 .profile-custom pre { white-space: pre-wrap; background: var(--bg-3); padding: 10px; border-radius: 8px; }
+
+/* --- Extended profile fields ---------------------------------------------- */
+.prof-tagline { margin-top: 6px; color: var(--text-dim); }
+.field-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px;
+}
+.field-grid label { display: flex; flex-direction: column; gap: 5px; font-size: 0.85rem; color: var(--text-dim); }
+.field-grid input, .field-grid select, .field-grid textarea { width: 100%; }
+
+.prof-facts {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px;
+  margin: 16px 0; padding: 4px 0;
+}
+.fact {
+  display: flex; flex-direction: column; gap: 2px; padding: 10px 12px;
+  background: var(--bg-1); border: 1px solid var(--border-soft); border-radius: var(--r);
+}
+.fact-label { color: var(--text-faint); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; }
+.fact-value { font-weight: 600; overflow-wrap: break-word; }
+
+/* --- Preferences page ------------------------------------------------------ */
+.pref-group { border: 1px solid var(--border); border-radius: var(--r-lg); padding: 16px; margin: 0; }
+.pref-group legend { padding: 0 8px; font-weight: 650; }
+.pref-toggles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.toggle { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.92rem; }
+.toggle input { width: auto; margin: 0; }

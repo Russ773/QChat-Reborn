@@ -31,16 +31,9 @@ if (is_post()) {
         }
     }
 
-    // Profile fields. profile_html is sanitised inside save_profile().
-    save_profile($acct, [
-        'display_name' => post('display_name'),
-        'pronouns' => post('pronouns'),
-        'status' => post('status'),
-        'bio' => post('bio'),
-        'links' => post('links'),
-        'accent' => post('accent'),
-        'profile_html' => (string) ($_POST['profile_html'] ?? ''),
-    ]);
+    // Profile fields. save_profile() validates/sanitises every field itself
+    // (including the custom HTML), so it's safe to hand it the whole form.
+    save_profile($acct, $_POST);
 
     if (!$errors) {
         flash('Profile saved.', 'ok');
@@ -54,7 +47,7 @@ require __DIR__ . '/templates/header.php';
 ?>
 <div class="card">
   <h2>Your profile</h2>
-  <p class="sub">This is what other people see. <a href="/u.php?a=<?= rawurlencode($acct) ?>">View your public page</a>.</p>
+  <p class="sub">This is what other people see. <a href="/u.php?a=<?= rawurlencode($acct) ?>">View your public page</a> &middot; <a href="/preferences.php">Choose what's visible</a>.</p>
 
   <?php foreach ($errors as $er): ?><div class="flash flash-error"><?= e($er) ?></div><?php endforeach; ?>
 
@@ -66,7 +59,7 @@ require __DIR__ . '/templates/header.php';
       <?php else: ?>
         <span class="avatar" style="background:linear-gradient(135deg,#7c8cff,#b06bff)"><?= e(strtoupper(substr($acct, 0, 1))) ?></span>
       <?php endif; ?>
-      <label style="flex:1">Avatar (PNG/JPG/WebP/GIF, up to 1 MB)
+      <label style="flex:1">Avatar (PNG, JPG, WebP or GIF)
         <input type="file" name="avatar" accept="image/png,image/jpeg,image/webp,image/gif">
       </label>
     </div>
@@ -79,6 +72,28 @@ require __DIR__ . '/templates/header.php';
     <label>Status
       <input name="status" value="<?= e($p['status'] ?? '') ?>" maxlength="120" placeholder="e.g. watching movies">
     </label>
+
+    <div class="field-grid">
+      <?php foreach (profile_detail_fields() as $key => $meta): $val = (string) ($p[$key] ?? ''); ?>
+        <label>
+          <?= e($meta['label']) ?>
+          <?php if ($meta['type'] === 'select'): ?>
+            <select name="<?= e($key) ?>">
+              <option value=""></option>
+              <?php foreach ($meta['options'] as $opt): ?>
+                <option value="<?= e($opt) ?>"<?= $val === $opt ? ' selected' : '' ?>><?= e($opt) ?></option>
+              <?php endforeach; ?>
+            </select>
+          <?php elseif ($meta['type'] === 'textarea'): ?>
+            <textarea name="<?= e($key) ?>" rows="2" maxlength="<?= (int) ($meta['maxlen'] ?? 255) ?>" placeholder="<?= e($meta['ph'] ?? '') ?>"><?= e($val) ?></textarea>
+          <?php elseif ($meta['type'] === 'number'): ?>
+            <input type="number" name="<?= e($key) ?>" value="<?= e($val) ?>" min="<?= (int) ($meta['min'] ?? 0) ?>" max="<?= (int) ($meta['max'] ?? 200) ?>">
+          <?php else: ?>
+            <input name="<?= e($key) ?>" value="<?= e($val) ?>" maxlength="<?= (int) ($meta['maxlen'] ?? 120) ?>" placeholder="<?= e($meta['ph'] ?? '') ?>">
+          <?php endif; ?>
+        </label>
+      <?php endforeach; ?>
+    </div>
     <label>Bio
       <textarea name="bio" rows="3" maxlength="300"><?= e($p['bio'] ?? '') ?></textarea>
     </label>

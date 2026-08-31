@@ -23,6 +23,7 @@ $title = isset($pageTitle) ? ($pageTitle . ' | ' . $CONFIG['site_name']) : $CONF
     <a href="/chat">Chat</a>
     <?php if ($acct !== null): ?>
       <a href="/profile.php">Profile</a>
+      <a href="/preferences.php">Preferences</a>
       <?php if (is_admin($acct)): ?><a href="/admin.php">Admin</a><?php endif; ?>
       <a href="/u.php?a=<?= rawurlencode($acct) ?>"><?= e($acct) ?></a>
       <a class="btn-sm" href="/logout.php">Log out</a>

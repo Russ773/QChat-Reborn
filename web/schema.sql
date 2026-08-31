@@ -15,9 +15,19 @@ CREATE TABLE IF NOT EXISTS profiles (
   status        VARCHAR(120) DEFAULT NULL,
   bio           TEXT         DEFAULT NULL,
   links         TEXT         DEFAULT NULL,          -- one URL per line
-  avatar        VARCHAR(255) DEFAULT NULL,          -- path under /avatars/
+  avatar        VARCHAR(255) DEFAULT NULL,          -- path under assets/images/avatars
   accent        VARCHAR(9)   DEFAULT NULL,          -- accent colour, e.g. #7c8cff
   profile_html  MEDIUMTEXT   DEFAULT NULL,          -- sanitised custom profile markup
+  age           TINYINT UNSIGNED DEFAULT NULL,
+  gender        VARCHAR(32)  DEFAULT NULL,
+  location      VARCHAR(80)  DEFAULT NULL,
+  timezone      VARCHAR(48)  DEFAULT NULL,
+  relationship  VARCHAR(32)  DEFAULT NULL,
+  looking_for   VARCHAR(120) DEFAULT NULL,
+  occupation    VARCHAR(80)  DEFAULT NULL,
+  interests     VARCHAR(255) DEFAULT NULL,
+  favourites    VARCHAR(255) DEFAULT NULL,
+  prefs         TEXT         DEFAULT NULL,           -- JSON: field visibility + allow_pm
   created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (account_lower)
@@ -65,3 +75,16 @@ INSERT IGNORE INTO roles (account_lower, role) VALUES ('russ', 'admin');
 -- ---------------------------------------------------------------------------
 -- ALTER TABLE profiles ADD COLUMN accent VARCHAR(9) DEFAULT NULL AFTER avatar;
 -- ALTER TABLE profiles ADD COLUMN profile_html MEDIUMTEXT DEFAULT NULL AFTER accent;
+--
+-- Extended chat-profile fields + display preferences:
+-- ALTER TABLE profiles
+--   ADD COLUMN age TINYINT UNSIGNED DEFAULT NULL,
+--   ADD COLUMN gender VARCHAR(32) DEFAULT NULL,
+--   ADD COLUMN location VARCHAR(80) DEFAULT NULL,
+--   ADD COLUMN timezone VARCHAR(48) DEFAULT NULL,
+--   ADD COLUMN relationship VARCHAR(32) DEFAULT NULL,
+--   ADD COLUMN looking_for VARCHAR(120) DEFAULT NULL,
+--   ADD COLUMN occupation VARCHAR(80) DEFAULT NULL,
+--   ADD COLUMN interests VARCHAR(255) DEFAULT NULL,
+--   ADD COLUMN favourites VARCHAR(255) DEFAULT NULL,
+--   ADD COLUMN prefs TEXT DEFAULT NULL;
