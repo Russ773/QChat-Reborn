@@ -96,6 +96,7 @@ if (gatewayMode) {
         password: botPassword,
         nick: process.env.BOT_NICK ?? botAccount,
         channels: botChannels,
+        own: process.env.BOT_OWN_CHANNELS === '1',
       },
       log,
     );

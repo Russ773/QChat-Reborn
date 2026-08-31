@@ -1,3 +1,4 @@
+import { nickFromPrefix } from '@qchat/shared';
 import { UpstreamConnection, type UpstreamOptions } from '../gateway/upstream.js';
 
 const NUL = String.fromCharCode(0);
@@ -10,6 +11,12 @@ export interface BotOptions extends UpstreamOptions {
   nick: string;
   /** Channels it joins and stays in, so it is always in the userlist. */
   channels: string[];
+  /**
+   * When true, the bot registers each channel with ChanServ (becoming its
+   * founder) the first time it joins, so it "owns" them. Op is then reclaimed
+   * from ChanServ on every (re)join regardless of this flag.
+   */
+  own: boolean;
 }
 
 /**
@@ -21,6 +28,8 @@ export class BotPresence {
   private conn: UpstreamConnection | null = null;
   private stopped = false;
   private reconnectDelay = 3000;
+  /** Channels we have already tried to register this process (avoids re-spam). */
+  private registerAttempted = new Set<string>();
 
   constructor(
     private opts: BotOptions,
@@ -85,6 +94,20 @@ export class BotPresence {
       } else if (msg.command === 'KICK' && msg.params[1] === this.opts.nick) {
         // Rejoin if kicked, so it stays present.
         conn.send({ command: 'JOIN', params: [msg.params[0] ?? ''] });
+      } else if (
+        msg.command === 'JOIN' &&
+        (nickFromPrefix(msg.prefix) ?? '').toLowerCase() === this.opts.nick.toLowerCase()
+      ) {
+        // We just (re)joined a channel. Take ownership / reclaim op via services.
+        const chan = (msg.params[0] ?? '').replace(/^:/, '');
+        if (!chan) return;
+        // Register it once so QBot becomes the founder and keeps op forever.
+        if (this.opts.own && !this.registerAttempted.has(chan.toLowerCase())) {
+          this.registerAttempted.add(chan.toLowerCase());
+          conn.send({ command: 'PRIVMSG', params: ['ChanServ', `REGISTER ${chan}`] });
+        }
+        // Ask ChanServ to op us based on our access (regained on every reconnect).
+        conn.send({ command: 'PRIVMSG', params: ['ChanServ', `OP ${chan}`] });
       }
     };
 
