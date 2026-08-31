@@ -39,8 +39,8 @@ export function MiniProfile({ nick, info, profile, x, y, onClose, onMention }: P
   }, [onClose]);
 
   const style: React.CSSProperties = {
-    left: Math.max(8, Math.min(x, window.innerWidth - 268)),
-    top: Math.max(8, Math.min(y, window.innerHeight - 300)),
+    left: Math.max(8, Math.min(x, window.innerWidth - 336)),
+    top: Math.max(8, Math.min(y, window.innerHeight - 360)),
   };
 
   const idle = formatIdle(info?.idleSeconds);

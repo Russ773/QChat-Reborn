@@ -1,0 +1,5 @@
+# Friendly error pages for Apache-level errors (missing files, etc.).
+# PHP-level fatals are handled by lib/errors.php instead.
+ErrorDocument 403 /error.php
+ErrorDocument 404 /error.php
+ErrorDocument 500 /error.php

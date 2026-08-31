@@ -590,7 +590,7 @@ button:active {
 .mini-profile {
   position: fixed;
   z-index: 200;
-  width: 260px;
+  width: 320px;
   background: var(--bg-2);
   border: 1px solid var(--border);
   border-radius: var(--r-lg);

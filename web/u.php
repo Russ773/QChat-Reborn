@@ -3,20 +3,13 @@ require __DIR__ . '/lib/boot.php';
 
 $acct = trim((string) ($_GET['a'] ?? ''));
 if (!valid_account_name($acct)) {
-    http_response_code(404);
-    $acct = '';
-}
-
-$p = $acct !== '' ? get_profile($acct) : null;
-$exists = $acct !== '' && ($p !== null || account_exists($acct));
-
-if (!$exists) {
-    $pageTitle = 'Not found';
-    require __DIR__ . '/templates/header.php';
-    echo '<div class="card"><h2>No such user</h2><p class="sub">That profile does not exist.</p></div>';
-    require __DIR__ . '/templates/footer.php';
+    qc_render_error(404);
     exit;
 }
+
+// Render a page for any valid account name; the profile may be empty if the
+// user has not set one up yet. (Existence is not gated on the accounts table.)
+$p = get_profile($acct) ?: [];
 
 $display = !empty($p['display_name']) ? $p['display_name'] : $acct;
 $links = !empty($p['links']) ? preg_split('/\r\n|\r|\n/', $p['links']) : [];
