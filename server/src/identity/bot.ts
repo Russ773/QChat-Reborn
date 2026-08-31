@@ -111,11 +111,12 @@ export class BotPresence {
         if (this.opts.own && !this.registerAttempted.has(chan.toLowerCase())) {
           this.registerAttempted.add(chan.toLowerCase());
           const cs = (text: string) => conn.send({ command: 'PRIVMSG', params: ['ChanServ', text] });
+          // NB: ChanServ SET syntax is option-FIRST: "SET <option> <channel> ...".
           cs(`REGISTER ${chan}`);
-          cs(`SET ${chan} KEEPTOPIC ON`); // topic survives restarts / emptying
-          cs(`SET ${chan} PERSIST ON`); // channel stays open even with no users
+          cs(`SET KEEPTOPIC ${chan} ON`); // topic survives restarts / emptying
+          cs(`SET PERSIST ${chan} ON`); // channel stays open even with no users
           for (const acct of this.opts.coowners) {
-            cs(`FLAGS ${chan} ${acct} +*`); // co-owner: auto-op, topic, ban, etc.
+            cs(`QOP ${chan} ADD ${acct}`); // co-owner: auto-owner, topic, ban, etc.
           }
         }
         // Ask ChanServ to op us based on our access (regained on every reconnect).
