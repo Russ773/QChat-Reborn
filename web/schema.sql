@@ -45,5 +45,14 @@ CREATE TABLE IF NOT EXISTS password_resets (
   INDEX idx_pr_account (account_lower)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Account directory: our own record of who signed up + their email, so the
+-- website can send password-reset links without reading Anope's tables.
+CREATE TABLE IF NOT EXISTS accounts (
+  account_lower VARCHAR(64)  NOT NULL PRIMARY KEY,
+  account       VARCHAR(64)  NOT NULL,
+  email         VARCHAR(255) NOT NULL,
+  created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- Seed the first admin. Change 'russ' if your account name differs.
 INSERT IGNORE INTO roles (account_lower, role) VALUES ('russ', 'admin');

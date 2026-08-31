@@ -8,7 +8,7 @@ if (!valid_account_name($acct)) {
 }
 
 $p = $acct !== '' ? get_profile($acct) : null;
-$exists = $acct !== '' && ($p !== null || anope_account_exists($acct));
+$exists = $acct !== '' && ($p !== null || account_exists($acct));
 
 if (!$exists) {
     $pageTitle = 'Not found';

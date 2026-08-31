@@ -11,6 +11,8 @@ import { WebSocketServer } from 'ws';
 import { handleApi, type ApiContext } from './api.js';
 import { AuthRegistry } from './auth.js';
 import { IrcGateway } from './gateway/gateway.js';
+import { handleInternalApi } from './identity/api.js';
+import { IdentityService } from './identity/identity.js';
 import { TcpConnection, WsConnection } from './ircd/connection.js';
 import { IrcServer } from './ircd/server.js';
 import { Store } from './store/store.js';
@@ -46,17 +48,24 @@ if (process.env.QCHAT_DEV_TOKEN) {
   log(`DEV token active for account "${devAccount}" (admin) — do not use in production`);
 }
 
+// Shared secret guarding the internal identity API (PHP -> gateway).
+const INTERNAL_API_SECRET = process.env.INTERNAL_API_SECRET ?? '';
+
 // --- Choose backend: bundled ircd (dev) or gateway to a real IRCd (prod) ----
 let acceptWs: (ws: import('ws').WebSocket, req: IncomingMessage) => void;
 let gatewayRef: IrcGateway | null = null;
+let identityRef: IdentityService | null = null;
 
 if (gatewayMode) {
+  const upstreamOpts = {
+    host: UPSTREAM_HOST!,
+    port: Number(process.env.IRC_UPSTREAM_PORT ?? 6667),
+    tls: process.env.IRC_UPSTREAM_TLS === '1',
+    rejectUnauthorized: process.env.IRC_UPSTREAM_TLS_REJECT_UNAUTHORIZED !== '0',
+  };
   const gateway = new IrcGateway(
     {
-      host: UPSTREAM_HOST!,
-      port: Number(process.env.IRC_UPSTREAM_PORT ?? 6667),
-      tls: process.env.IRC_UPSTREAM_TLS === '1',
-      rejectUnauthorized: process.env.IRC_UPSTREAM_TLS_REJECT_UNAUTHORIZED !== '0',
+      ...upstreamOpts,
       serverName: SERVER_NAME,
       webircPassword: process.env.WEBIRC_PASSWORD || undefined,
       webircName: process.env.WEBIRC_NAME ?? 'qchat',
@@ -66,6 +75,18 @@ if (gatewayMode) {
     log,
   );
   gatewayRef = gateway;
+
+  // Identity bridge for the PHP site (register / verify / reset via NickServ).
+  if (process.env.BOT_ACCOUNT && process.env.BOT_PASSWORD) {
+    identityRef = new IdentityService(
+      { ...upstreamOpts, botAccount: process.env.BOT_ACCOUNT, botPassword: process.env.BOT_PASSWORD },
+      log,
+    );
+    log('identity bridge: enabled');
+  } else {
+    log('identity bridge: disabled (set BOT_ACCOUNT / BOT_PASSWORD to enable)');
+  }
+
   acceptWs = (ws, req) => gateway.accept(new WsConnection(ws, clientIp(req)), clientIp(req));
   log(
     `mode: GATEWAY -> ${UPSTREAM_HOST}:${process.env.IRC_UPSTREAM_PORT ?? 6667}` +
@@ -122,6 +143,7 @@ function handleHttp(req: IncomingMessage, res: ServerResponse): void {
     res.writeHead(200, { 'content-type': 'text/plain' }).end('ok');
     return;
   }
+  if (handleInternalApi(req, res, identityRef, INTERNAL_API_SECRET)) return;
   if (handleApi(req, res, apiCtx)) return;
 
   const urlPath = (req.url ?? '/').split('?')[0];

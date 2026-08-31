@@ -8,8 +8,8 @@ if (is_post()) {
     $account = post('account');
     // Always respond the same way to avoid revealing which accounts exist.
     $done = true;
-    if (valid_account_name($account) && anope_account_exists($account)) {
-        $email = anope_email($account);
+    if (valid_account_name($account) && account_exists($account)) {
+        $email = account_email($account);
         if ($email) {
             $token = bin2hex(random_bytes(32));
             $expires = date('Y-m-d H:i:s', time() + $CONFIG['reset_ttl_minutes'] * 60);

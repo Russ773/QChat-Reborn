@@ -16,7 +16,7 @@ if (is_post()) {
     check_csrf();
     $account = post('account');
     $pass = $_POST['password'] ?? '';
-    $canonical = $account !== '' && $pass !== '' ? anope_verify($account, $pass) : null;
+    $canonical = $account !== '' && $pass !== '' ? identity_verify($account, $pass) : null;
     if ($canonical !== null) {
         login_session($canonical);
         redirect($next);

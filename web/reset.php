@@ -27,10 +27,14 @@ if (is_post() && $row) {
         $errors[] = 'The two passwords do not match.';
     }
     if (!$errors) {
-        anope_set_password($row['account_lower'], $pass);
-        db()->prepare('UPDATE password_resets SET used = 1 WHERE token = ?')->execute([$token]);
-        flash('Your password has been reset. You can log in now.', 'ok');
-        redirect('/login.php');
+        try {
+            identity_set_password($row['account_lower'], $pass);
+            db()->prepare('UPDATE password_resets SET used = 1 WHERE token = ?')->execute([$token]);
+            flash('Your password has been reset. You can log in now.', 'ok');
+            redirect('/login.php');
+        } catch (Throwable $ex) {
+            $errors[] = $ex->getMessage();
+        }
     }
 }
 

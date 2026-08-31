@@ -30,20 +30,20 @@ if (is_post()) {
     if (strcasecmp($pass, $account) === 0) {
         $errors[] = 'Password must not be the same as your nickname.';
     }
-    if (!$errors && anope_account_exists($account)) {
+    if (!$errors && account_exists($account)) {
         $errors[] = 'That nickname is already registered. Try another, or log in.';
     }
 
     if (!$errors) {
         try {
-            anope_register($account, $pass, $email);
+            identity_register($account, $pass, $email);
+            account_create($account, $email);
             save_profile($account, []); // create an empty profile row
             login_session($account);
             flash('Welcome to QChat, ' . $account . '! Your account is ready.', 'ok');
             redirect('/profile.php');
         } catch (Throwable $ex) {
-            $errors[] = 'Could not create the account. Please try again.';
-            error_log('register failed: ' . $ex->getMessage());
+            $errors[] = $ex->getMessage();
         }
     }
 }

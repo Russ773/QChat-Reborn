@@ -16,14 +16,11 @@ return [
         'pass' => 'CHANGE_ME',
     ],
 
-    // How Anope stores account data in that database.
-    //  - table_prefix: Anope's db_sql "prefix" setting (default "anope_db_").
-    //  - pass_prefix:  Anope stores passwords as "<encmodule>:<hash>". With
-    //    enc_bcrypt that is "bcrypt:". Confirm from an existing row:
-    //      SELECT display, LEFT(pass, 8) FROM anope_db_NickCore LIMIT 1;
-    'anope' => [
-        'table_prefix' => 'anope_db_',
-        'pass_prefix' => 'bcrypt:',
+    // The Node gateway's internal identity API (same machine, over localhost).
+    // 'secret' must equal INTERNAL_API_SECRET in the gateway's .env.
+    'gateway' => [
+        'url' => 'http://127.0.0.1:8080',
+        'secret' => 'CHANGE_ME_match_the_gateway_INTERNAL_API_SECRET',
     ],
 
     // Avatar uploads (a writable directory served at /avatars/).

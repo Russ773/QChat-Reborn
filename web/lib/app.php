@@ -71,3 +71,27 @@ function list_announcements(int $limit = 20): array
     $stmt->execute();
     return $stmt->fetchAll();
 }
+
+// --- Account directory (our record of who signed up + their email) ---------
+
+function account_create(string $account, string $email): void
+{
+    db()->prepare('INSERT INTO accounts (account_lower, account, email) VALUES (?, ?, ?)
+                   ON DUPLICATE KEY UPDATE email = VALUES(email)')
+        ->execute([mb_strtolower($account), $account, $email]);
+}
+
+function account_exists(string $account): bool
+{
+    $stmt = db()->prepare('SELECT 1 FROM accounts WHERE account_lower = ? LIMIT 1');
+    $stmt->execute([mb_strtolower($account)]);
+    return (bool) $stmt->fetchColumn();
+}
+
+function account_email(string $account): ?string
+{
+    $stmt = db()->prepare('SELECT email FROM accounts WHERE account_lower = ? LIMIT 1');
+    $stmt->execute([mb_strtolower($account)]);
+    $email = $stmt->fetchColumn();
+    return $email !== false ? (string) $email : null;
+}
