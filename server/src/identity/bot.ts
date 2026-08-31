@@ -101,10 +101,14 @@ export class BotPresence {
         // We just (re)joined a channel. Take ownership / reclaim op via services.
         const chan = (msg.params[0] ?? '').replace(/^:/, '');
         if (!chan) return;
-        // Register it once so QBot becomes the founder and keeps op forever.
+        // Register it once so QBot becomes the founder and keeps op forever,
+        // then set it to remember its topic and stay alive when empty.
         if (this.opts.own && !this.registerAttempted.has(chan.toLowerCase())) {
           this.registerAttempted.add(chan.toLowerCase());
-          conn.send({ command: 'PRIVMSG', params: ['ChanServ', `REGISTER ${chan}`] });
+          const cs = (text: string) => conn.send({ command: 'PRIVMSG', params: ['ChanServ', text] });
+          cs(`REGISTER ${chan}`);
+          cs(`SET ${chan} KEEPTOPIC ON`); // topic survives restarts / emptying
+          cs(`SET ${chan} PERSIST ON`); // channel stays open even with no users
         }
         // Ask ChanServ to op us based on our access (regained on every reconnect).
         conn.send({ command: 'PRIVMSG', params: ['ChanServ', `OP ${chan}`] });
