@@ -23,14 +23,15 @@ return [
         'secret' => 'CHANGE_ME_match_the_gateway_INTERNAL_API_SECRET',
     ],
 
-    // Avatar uploads (a writable directory served at /avatars/).
-    'avatar_dir' => __DIR__ . '/avatars',
-    'avatar_url' => '/avatars',
+    // All user uploads live under assets/images/ to keep the web root tidy.
+    // These folders must exist and be writable by the web server.
+    'avatar_dir' => __DIR__ . '/assets/images/avatars',
+    'avatar_url' => '/assets/images/avatars',
     'avatar_max_bytes' => 1048576, // 1 MiB
 
-    // Profile images embedded in custom profiles (writable, served at /profile-media/).
-    'profile_media_dir' => __DIR__ . '/profile-media',
-    'profile_media_url' => '/profile-media',
+    // Profile images embedded in custom profiles.
+    'profile_media_dir' => __DIR__ . '/assets/images/profile-media',
+    'profile_media_url' => '/assets/images/profile-media',
     'profile_image_max_bytes' => 3145728, // 3 MiB
 
     // Password-reset email (PHPMailer or PHP mail()). Set from a real address.
