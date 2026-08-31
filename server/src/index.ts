@@ -97,6 +97,10 @@ if (gatewayMode) {
         nick: process.env.BOT_NICK ?? botAccount,
         channels: botChannels,
         own: process.env.BOT_OWN_CHANNELS === '1',
+        coowners: (process.env.BOT_COOWNERS ?? '')
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean),
       },
       log,
     );

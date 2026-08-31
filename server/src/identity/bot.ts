@@ -17,6 +17,11 @@ export interface BotOptions extends UpstreamOptions {
    * from ChanServ on every (re)join regardless of this flag.
    */
   own: boolean;
+  /**
+   * Accounts granted full ChanServ flags (co-owners) on channels the bot owns,
+   * so a human admin is auto-opped and can set topics, ban, etc.
+   */
+  coowners: string[];
 }
 
 /**
@@ -109,6 +114,9 @@ export class BotPresence {
           cs(`REGISTER ${chan}`);
           cs(`SET ${chan} KEEPTOPIC ON`); // topic survives restarts / emptying
           cs(`SET ${chan} PERSIST ON`); // channel stays open even with no users
+          for (const acct of this.opts.coowners) {
+            cs(`FLAGS ${chan} ${acct} +*`); // co-owner: auto-op, topic, ban, etc.
+          }
         }
         // Ask ChanServ to op us based on our access (regained on every reconnect).
         conn.send({ command: 'PRIVMSG', params: ['ChanServ', `OP ${chan}`] });
