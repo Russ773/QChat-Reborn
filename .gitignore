@@ -19,3 +19,7 @@ uploads/
 # tooling / local
 .claude/
 *.tsbuildinfo
+
+# PHP web app local config + uploaded avatars
+web/config.php
+web/avatars/

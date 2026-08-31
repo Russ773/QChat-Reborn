@@ -1,0 +1,20 @@
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="QChat Reborn">
+  <defs>
+    <radialGradient id="orb" cx="38%" cy="30%" r="72%">
+      <stop offset="0%" stop-color="#e2f5ff"/><stop offset="42%" stop-color="#2f8ae6"/><stop offset="100%" stop-color="#08377d"/>
+    </radialGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ffe982"/><stop offset="55%" stop-color="#f5b021"/><stop offset="100%" stop-color="#d5860a"/>
+    </linearGradient>
+    <linearGradient id="bub" x1="0.1" y1="0" x2="0.9" y2="1">
+      <stop offset="0%" stop-color="#7ed957"/><stop offset="100%" stop-color="#ffe047"/>
+    </linearGradient>
+    <radialGradient id="gloss" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fff" stop-opacity=".85"/><stop offset="100%" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <path d="M19 5 H45 Q59 5 59 19 V32 Q59 46 45 46 H27 L13 59 L20 46 H19 Q5 46 5 32 V19 Q5 5 19 5 Z" fill="url(#bub)"/>
+  <g transform="rotate(-24 32 25)"><ellipse cx="32" cy="25" rx="21" ry="7.6" fill="none" stroke="url(#gold)" stroke-width="2.9"/></g>
+  <circle cx="32" cy="25" r="12.6" fill="url(#orb)"/>
+  <ellipse cx="27.5" cy="19.8" rx="5.2" ry="3.2" fill="url(#gloss)"/>
+</svg>
