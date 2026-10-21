@@ -9,6 +9,8 @@ export interface ChatUser {
   /** Stable per-connection id. */
   id: string;
   nick: string;
+  /** The registered account this connection is logged in as, else null. */
+  account?: string | null;
 }
 
 export interface ChatLine {
@@ -20,7 +22,7 @@ export interface ChatLine {
 
 /** Messages the browser sends to the server. */
 export type ClientMsg =
-  | { t: 'hello'; nick: string }
+  | { t: 'hello'; nick: string; token?: string }
   | { t: 'join'; room: string }
   | { t: 'leave'; room: string }
   | { t: 'say'; room: string; text: string }

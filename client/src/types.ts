@@ -31,6 +31,8 @@ export interface RoomState {
 
 export interface AppState {
   nick: string;
+  /** The logged-in account, or null for guests. */
+  account: string | null;
   status: ChatStatus;
   /** Rooms available to join (advertised by the server on welcome). */
   available: string[];

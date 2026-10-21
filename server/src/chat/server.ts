@@ -14,8 +14,12 @@ interface Conn {
   id: string;
   ws: WebSocket;
   nick: string;
+  account: string | null;
   rooms: Set<string>;
 }
+
+/** Resolves a session token to an account name, or null. */
+export type AuthResolver = (token: string) => string | null;
 
 const DEFAULT_ROOMS = ['#lobby', '#general', '#help'];
 const HISTORY_LIMIT = 50;
@@ -31,14 +35,17 @@ export class ChatServer {
   private rooms = new Map<string, Set<string>>(); // room -> connection ids
   private history = new Map<string, ChatLine[]>(); // room -> recent lines
 
-  constructor(private log: (msg: string) => void = () => {}) {
+  constructor(
+    private log: (msg: string) => void = () => {},
+    private auth?: AuthResolver,
+  ) {
     for (const r of DEFAULT_ROOMS) {
       this.rooms.set(r, new Set());
     }
   }
 
   accept(ws: WebSocket): void {
-    const conn: Conn = { id: randomUUID(), ws, nick: '', rooms: new Set() };
+    const conn: Conn = { id: randomUUID(), ws, nick: '', account: null, rooms: new Set() };
     this.conns.set(conn.id, conn);
 
     ws.on('message', (data) => {
@@ -54,7 +61,7 @@ export class ChatServer {
   private handle(conn: Conn, msg: ClientMsg): void {
     switch (msg.t) {
       case 'hello':
-        return this.onHello(conn, msg.nick);
+        return this.onHello(conn, msg.nick, msg.token);
       case 'join':
         return this.onJoin(conn, msg.room);
       case 'leave':
@@ -68,11 +75,14 @@ export class ChatServer {
     }
   }
 
-  private onHello(conn: Conn, desired: string): void {
-    conn.nick = this.uniqueNick(desired);
+  private onHello(conn: Conn, desired: string, token?: string): void {
+    // A valid token logs the connection in and locks the nick to the account.
+    const account = token && this.auth ? this.auth(token) : null;
+    conn.account = account;
+    conn.nick = account ?? this.uniqueNick(desired);
     this.send(conn, {
       t: 'welcome',
-      you: { id: conn.id, nick: conn.nick },
+      you: { id: conn.id, nick: conn.nick, account: conn.account },
       rooms: [...this.rooms.keys()],
     });
   }

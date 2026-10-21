@@ -3,12 +3,14 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
+import { accountForToken } from './accounts.js';
+import { handleApi } from './api.js';
 import { ChatServer } from './chat/server.js';
 
 const HTTP_PORT = Number(process.env.HTTP_PORT ?? 8080);
 const log = (msg: string) => console.log(`[qchat] ${new Date().toISOString()} ${msg}`);
 
-const chat = new ChatServer(log);
+const chat = new ChatServer(log, (token) => accountForToken(token));
 
 // --- Static client --------------------------------------------------------
 const serverRoot = resolve(fileURLToPath(new URL('.', import.meta.url)), '..');
@@ -28,11 +30,12 @@ const MIME: Record<string, string> = {
   '.woff2': 'font/woff2',
 };
 
-function handleHttp(req: IncomingMessage, res: ServerResponse): void {
+async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
   if (req.url === '/healthz') {
     res.writeHead(200, { 'content-type': 'text/plain' }).end('ok');
     return;
   }
+  if (await handleApi(req, res)) return;
   if (!existsSync(clientDir)) {
     res
       .writeHead(200, { 'content-type': 'text/html' })
@@ -53,7 +56,12 @@ function handleHttp(req: IncomingMessage, res: ServerResponse): void {
 }
 
 // --- HTTP + WebSocket -----------------------------------------------------
-const http = createServer(handleHttp);
+const http = createServer((req, res) => {
+  handleHttp(req, res).catch((err) => {
+    log(`http error: ${String(err)}`);
+    if (!res.headersSent) res.writeHead(500).end('error');
+  });
+});
 const wss = new WebSocketServer({ server: http, path: '/ws' });
 
 wss.on('connection', (ws) => {

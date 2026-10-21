@@ -18,12 +18,12 @@ export class ChatClient {
 
   constructor(private handlers: ChatHandlers) {}
 
-  connect(nick: string, url = defaultWsUrl()): void {
+  connect(nick: string, token?: string | null, url = defaultWsUrl()): void {
     this.handlers.onStatus('connecting');
     const ws = new WebSocket(url);
     this.ws = ws;
     ws.onopen = () => {
-      this.send({ t: 'hello', nick });
+      this.send({ t: 'hello', nick, token: token ?? undefined });
       this.handlers.onStatus('online');
     };
     ws.onmessage = (e) => {

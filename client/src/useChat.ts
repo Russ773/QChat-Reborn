@@ -13,7 +13,8 @@ function makeEvent(kind: ChatEventKind, text: string, from?: string, self?: bool
 function initialState(nick: string): AppState {
   return {
     nick,
-    status: 'connecting',
+    account: null,
+    status: 'idle',
     available: [],
     rooms: {},
     order: [],
@@ -52,7 +53,13 @@ function reducer(state: AppState, action: Action): AppState {
   const msg = action.msg;
   switch (msg.t) {
     case 'welcome':
-      return { ...state, nick: msg.you.nick, status: 'online', available: msg.rooms };
+      return {
+        ...state,
+        nick: msg.you.nick,
+        account: msg.you.account ?? null,
+        status: 'online',
+        available: msg.rooms,
+      };
 
     case 'joined': {
       const events: ChatEvent[] = msg.history.map((l) => ({
@@ -119,7 +126,7 @@ function reducer(state: AppState, action: Action): AppState {
 export interface UseChat {
   state: AppState;
   status: ChatStatus;
-  connect: (nick: string) => void;
+  connect: (nick: string, token?: string | null) => void;
   join: (room: string) => void;
   leave: (room: string) => void;
   say: (room: string, text: string) => void;
@@ -132,13 +139,13 @@ export function useChat(): UseChat {
   const clientRef = useRef<ChatClient | null>(null);
   const autoJoined = useRef(false);
 
-  const connect = useCallback((nick: string) => {
+  const connect = useCallback((nick: string, token?: string | null) => {
     const client = new ChatClient({
       onMessage: (msg) => dispatch({ type: 'server', msg }),
       onStatus: (status) => dispatch({ type: 'status', status }),
     });
     clientRef.current = client;
-    client.connect(nick);
+    client.connect(nick, token);
   }, []);
 
   // Auto-join the lobby once the server welcomes us.

@@ -23,3 +23,6 @@ uploads/
 # PHP web app local config + uploaded avatars
 web/config.php
 web/avatars/
+
+# SQLite data
+server/data/
