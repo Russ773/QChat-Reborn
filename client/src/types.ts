@@ -1,4 +1,4 @@
-import type { Announcement, MediaState } from '@qchat/shared';
+import type { ChatStatus } from './chat/client.js';
 
 export type ChatEventKind =
   | 'message'
@@ -21,54 +21,24 @@ export interface ChatEvent {
   self?: boolean;
 }
 
-export interface ChannelState {
+export interface RoomState {
   name: string;
   members: string[];
   events: ChatEvent[];
-  media?: MediaState;
-  /** Unread count while the channel is not active. */
+  /** Unread count while the room is not active. */
   unread: number;
-}
-
-/** WHOIS-derived profile for the right-click mini-profile (#8). */
-export interface WhoisInfo {
-  nick: string;
-  user?: string;
-  host?: string;
-  realname?: string;
-  /** Services account the user is logged in as (RPL_WHOISACCOUNT 330). */
-  account?: string;
-  channels?: string;
-  server?: string;
-  idleSeconds?: number;
-  loading: boolean;
-}
-
-/** One row of the channel browser (from RPL_LIST / 322). */
-export interface ChannelListItem {
-  name: string;
-  users: number;
-  topic: string;
 }
 
 export interface AppState {
   nick: string;
-  /** NickServ account once SASL login succeeds (#9), else null. */
-  account: string | null;
-  /** Roles for the logged-in account (e.g. "admin"), from the gateway. */
-  roles: string[];
-  /** API bearer token minted by the gateway after SASL (null for guests). */
-  token: string | null;
-  /** Most recent live announcement, for the top banner (#5). */
-  latestAnnouncement: Announcement | null;
-  /** Ordered list of channel names (buffers), including the server buffer. */
-  buffers: string[];
-  channels: Record<string, ChannelState>;
+  status: ChatStatus;
+  /** Rooms available to join (advertised by the server on welcome). */
+  available: string[];
+  /** Rooms the user has joined, keyed by room name. */
+  rooms: Record<string, RoomState>;
+  /** Ordered list of joined room names (for the sidebar). */
+  order: string[];
   active: string | null;
-  /** Server/system buffer messages (numerics, notices, errors). */
+  /** System/notice log shown when no room is active. */
   serverLog: ChatEvent[];
-  /** WHOIS results keyed by lowercased nick. */
-  whois: Record<string, WhoisInfo>;
-  /** Channel browser results (from /LIST). */
-  channelList: { items: ChannelListItem[]; loading: boolean };
 }
