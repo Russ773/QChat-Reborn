@@ -114,7 +114,6 @@ export default function App() {
             <div className="content">
               <RoomChat
                 events={room.events}
-                myNick={state.nick}
                 draft={draft}
                 setDraft={setDraft}
                 onSend={(text) => chat.say(room.name, text)}
@@ -166,6 +165,13 @@ function Connect({ onConnect }: { onConnect: (nick: string) => void }) {
   };
   return (
     <div className="connect">
+      <div className="connect-bubbles" aria-hidden="true">
+        <span className="cb cb1">🎵</span>
+        <span className="cb cb2">💬</span>
+        <span className="cb cb3">🎬</span>
+        <span className="cb cb4">😄</span>
+        <span className="cb cb5">✨</span>
+      </div>
       <form onSubmit={submit}>
         <div className="connect-brand">
           <LogoMark size={72} />
@@ -211,13 +217,11 @@ function JoinBox({ onJoin }: { onJoin: (room: string) => void }) {
 
 function RoomChat({
   events,
-  myNick,
   draft,
   setDraft,
   onSend,
 }: {
   events: ChatEvent[];
-  myNick: string;
   draft: string;
   setDraft: React.Dispatch<React.SetStateAction<string>>;
   onSend: (text: string) => void;
@@ -262,7 +266,7 @@ function RoomChat({
           ref={inputRef}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder={`Message #${myNick ? '' : ''}…`}
+          placeholder="Message the room…"
         />
         <button type="submit">Send</button>
       </form>
