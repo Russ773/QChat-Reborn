@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QChat Reborn · Relaunching soon</title>
+  <meta name="description" content="QChat is coming back. New home, same daft conversations and tunes played straight into the chat. Media Webchat, Reborn.">
+  <link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700;12..96,800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --ink: #0a0a1f;
+      --blue: #2b6bff;
+      --cyan: #19d3ff;
+      --gold: #ffc93c;
+      --green: #35e08a;
+      --pink: #ff4d8d;
+      --purple: #a855f7;
+      --paper: #f4f3ff;
+      font-family: "Bricolage Grotesque", ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      background:
+        radial-gradient(60vw 60vw at 12% -10%, rgba(43,107,255,0.45), transparent 60%),
+        radial-gradient(55vw 55vw at 95% 8%, rgba(255,77,141,0.40), transparent 60%),
+        radial-gradient(60vw 60vw at 80% 110%, rgba(53,224,138,0.38), transparent 60%),
+        radial-gradient(50vw 50vw at 0% 100%, rgba(255,201,60,0.34), transparent 60%),
+        linear-gradient(160deg, #0b0b22, #140a2e 55%, #0a0a1f);
+      color: var(--paper);
+      min-height: 100vh;
+      overflow-x: hidden;
+      position: relative;
+      -webkit-font-smoothing: antialiased;
+    }
+    /* Fine grain so it feels printed, not plasticky. */
+    body::after {
+      content: "";
+      position: fixed; inset: 0; z-index: 3; pointer-events: none; opacity: 0.05;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    }
+
+    /* --- Floating chat bubbles ------------------------------------------- */
+    .bubbles { position: fixed; inset: 0; z-index: 1; pointer-events: none; }
+    .bubble {
+      position: absolute; border-radius: 22px 22px 22px 4px;
+      opacity: 0.9; box-shadow: 0 18px 50px rgba(0,0,0,0.25);
+      animation: bob 9s ease-in-out infinite;
+      display: grid; place-items: center; font-size: 1.4rem;
+    }
+    .bubble::after {
+      content: ""; position: absolute; left: 10px; bottom: -9px;
+      border: 10px solid transparent; border-top-color: inherit; border-right: 0;
+      filter: brightness(0.9);
+    }
+    .b1 { top: 14%; left: 7%;  width: 64px; height: 50px; background: var(--gold);  color:#3a2a00; animation-delay: -1s; transform: rotate(-8deg); }
+    .b2 { top: 24%; right: 9%; width: 78px; height: 58px; background: var(--pink);  color:#4a0025; animation-delay: -3s; transform: rotate(7deg); border-radius: 22px 22px 4px 22px; }
+    .b3 { top: 62%; left: 10%; width: 90px; height: 62px; background: var(--green); color:#063b22; animation-delay: -5s; transform: rotate(5deg); }
+    .b4 { bottom: 12%; right: 12%; width: 70px; height: 54px; background: var(--cyan); color:#003a4a; animation-delay: -2s; transform: rotate(-6deg); border-radius: 22px 22px 4px 22px; }
+    .b5 { top: 48%; right: 4%; width: 44px; height: 36px; background: var(--blue); color:#fff; animation-delay: -6s; transform: rotate(10deg); }
+    .b6 { bottom: 26%; left: 4%; width: 40px; height: 34px; background: var(--purple); color:#fff; animation-delay: -4s; transform: rotate(-12deg); border-radius: 22px 22px 4px 22px; }
+    @keyframes bob {
+      0%, 100% { translate: 0 0; }
+      50% { translate: 0 -16px; }
+    }
+
+    /* --- Layout ---------------------------------------------------------- */
+    .wrap {
+      position: relative; z-index: 2;
+      min-height: 100vh; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 48px 16px; text-align: center;
+    }
+    .badge {
+      display: inline-flex; align-items: center; gap: 9px;
+      background: #fff; color: #14111f; font-weight: 700; font-size: 0.82rem;
+      letter-spacing: 0.04em; text-transform: uppercase;
+      padding: 9px 16px 9px 13px; border-radius: 999px; transform: rotate(-2deg);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.3); margin-bottom: 28px;
+    }
+    .live-dot {
+      width: 10px; height: 10px; border-radius: 50%; background: var(--green);
+      box-shadow: 0 0 0 0 rgba(53,224,138,0.7); animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(53,224,138,0.6); }
+      70% { box-shadow: 0 0 0 12px rgba(53,224,138,0); }
+      100% { box-shadow: 0 0 0 0 rgba(53,224,138,0); }
+    }
+
+    .brand { display: flex; align-items: center; gap: 16px; margin-bottom: 10px; }
+    .brand svg { width: 66px; height: 66px; filter: drop-shadow(0 8px 24px rgba(0,0,0,0.35)); }
+    .wordmark {
+      font-weight: 800; font-size: clamp(2.6rem, 9vw, 5.4rem); line-height: 0.92;
+      letter-spacing: -0.02em;
+    }
+    .wordmark .reborn {
+      background: linear-gradient(92deg, var(--cyan), var(--pink) 45%, var(--gold));
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+
+    h1 {
+      font-weight: 700; font-size: clamp(1.5rem, 4.6vw, 2.6rem); line-height: 1.08;
+      margin: 18px 0 6px; max-width: 16ch;
+    }
+    .slogan {
+      font-size: clamp(1rem, 2.6vw, 1.3rem); font-weight: 600; margin: 0 0 20px;
+      color: var(--gold);
+    }
+    .blurb {
+      max-width: 48ch; margin: 0 auto 30px; line-height: 1.6;
+      color: rgba(244,243,255,0.86); font-size: clamp(1rem, 2.2vw, 1.12rem);
+    }
+
+    .typing {
+      margin-top: 8px; display: inline-flex; align-items: center; gap: 12px;
+      color: rgba(244,243,255,0.75); font-size: 0.95rem;
+    }
+    .dots { display: inline-flex; gap: 5px; background: rgba(255,255,255,0.1); padding: 10px 12px; border-radius: 14px 14px 14px 4px; }
+    .dots i { width: 7px; height: 7px; border-radius: 50%; background: #fff; display: block; animation: blink 1.4s infinite both; }
+    .dots i:nth-child(2) { animation-delay: 0.2s; }
+    .dots i:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes blink { 0%, 60%, 100% { opacity: 0.25; } 30% { opacity: 1; } }
+
+    footer {
+      position: relative; z-index: 2; text-align: center;
+      padding: 0 16px 34px; color: rgba(244,243,255,0.55); font-size: 0.85rem;
+    }
+    footer .heart { color: var(--pink); }
+
+    @media (prefers-reduced-motion: reduce) {
+      .bubble, .live-dot, .dots i { animation: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="bubbles" id="bubbles">
+    <div class="bubble b1">🎵</div>
+    <div class="bubble b2">💬</div>
+    <div class="bubble b3">🎬</div>
+    <div class="bubble b4">😄</div>
+    <div class="bubble b5">★</div>
+    <div class="bubble b6">✨</div>
+  </div>
+
+  <main class="wrap">
+    <span class="badge"><span class="live-dot"></span> Relaunching soon</span>
+
+    <div class="brand">
+      <svg viewBox="0 0 100 100" aria-hidden="true">
+        <defs>
+          <radialGradient id="orb" cx="38%" cy="34%" r="70%">
+            <stop offset="0%" stop-color="#7db4ff"/>
+            <stop offset="55%" stop-color="#2b6bff"/>
+            <stop offset="100%" stop-color="#143a9e"/>
+          </radialGradient>
+          <linearGradient id="bub" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#9dff5a"/>
+            <stop offset="100%" stop-color="#ffd23f"/>
+          </linearGradient>
+        </defs>
+        <ellipse cx="50" cy="52" rx="42" ry="30" fill="none" stroke="#ffc93c" stroke-width="5" transform="rotate(-24 50 52)"/>
+        <circle cx="48" cy="46" r="26" fill="url(#orb)"/>
+        <circle cx="40" cy="38" r="7" fill="#fff" opacity="0.55"/>
+        <path d="M58 60 h26 a6 6 0 0 1 6 6 v14 a6 6 0 0 1 -6 6 h-13 l-9 8 v-8 h-4 a6 6 0 0 1 -6 -6 v-14 a6 6 0 0 1 6 -6 z" fill="url(#bub)"/>
+        <g fill="#0b3b1a"><circle cx="66" cy="73" r="2.4"/><circle cx="74" cy="73" r="2.4"/><circle cx="82" cy="73" r="2.4"/></g>
+      </svg>
+      <span class="wordmark">QChat <span class="reborn">Reborn</span></span>
+    </div>
+
+    <h1>The old chatroom is getting the band back together.</h1>
+    <p class="slogan">Media Webchat, Reborn.</p>
+    <p class="blurb">
+      New home, new server, fresh coat of paint, and the same daft conversations and tunes
+      played straight into the chat. We are putting the finishing touches on it right now.
+    </p>
+
+    <div class="typing">
+      <span class="dots"><i></i><i></i><i></i></span>
+      <span>See you in there soon.</span>
+    </div>
+  </main>
+
+  <footer>
+    Built with a bit of <span class="heart">&hearts;</span> for the old QChat crowd. &middot; qchat.co.uk
+  </footer>
+
+  <script>
+    // Gentle pointer parallax on the bubble layer (skipped if motion is reduced).
+    (function () {
+      var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      var layer = document.getElementById('bubbles');
+      if (layer && !reduce) {
+        window.addEventListener('pointermove', function (e) {
+          var dx = (e.clientX / window.innerWidth - 0.5) * 20;
+          var dy = (e.clientY / window.innerHeight - 0.5) * 20;
+          layer.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+        }, { passive: true });
+      }
+    })();
+  </script>
+</body>
+</html>
