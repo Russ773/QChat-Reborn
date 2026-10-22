@@ -1,3 +1,4 @@
+import type { MediaState } from '@qchat/shared';
 import type { ChatStatus } from './chat/client.js';
 
 export type ChatEventKind =
@@ -27,6 +28,8 @@ export interface RoomState {
   events: ChatEvent[];
   /** Unread count while the room is not active. */
   unread: number;
+  /** The room's current synced media, or null. */
+  media: MediaState | null;
 }
 
 export interface AppState {
@@ -43,4 +46,6 @@ export interface AppState {
   active: string | null;
   /** System/notice log shown when no room is active. */
   serverLog: ChatEvent[];
+  /** The most recent sound to play (bumped id so effects re-fire). */
+  lastSound: { id: number; room: string; sound: string; from: string } | null;
 }

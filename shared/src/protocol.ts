@@ -20,6 +20,29 @@ export interface ChatLine {
   ts: number;
 }
 
+/**
+ * The room's current synced media (a YouTube video). The timeline is
+ * server-authoritative: while playing, position(sec) = (Date.now() - startedAt)
+ * / 1000; while paused, position = pausedPos.
+ */
+export interface MediaState {
+  kind: 'youtube';
+  ref: string; // youtube video id
+  title?: string;
+  by: string;
+  paused: boolean;
+  startedAt: number; // server epoch ms for position 0
+  pausedPos: number; // seconds, used while paused
+}
+
+/** Extract an 11-char YouTube id from a url or raw id, else null. */
+export function youTubeId(input: string): string | null {
+  const s = input.trim();
+  if (/^[A-Za-z0-9_-]{11}$/.test(s)) return s;
+  const m = s.match(/(?:v=|\/embed\/|youtu\.be\/|\/v\/|\/shorts\/)([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
+
 /** Messages the browser sends to the server. */
 export type ClientMsg =
   | { t: 'hello'; nick: string; token?: string }
@@ -27,6 +50,9 @@ export type ClientMsg =
   | { t: 'leave'; room: string }
   | { t: 'say'; room: string; text: string }
   | { t: 'nick'; nick: string }
+  | { t: 'playYouTube'; room: string; ref: string; title?: string }
+  | { t: 'mediaControl'; room: string; op: 'pause' | 'resume' | 'seek' | 'stop'; pos?: number }
+  | { t: 'playSound'; room: string; sound: string }
   | { t: 'ping' };
 
 /** Messages the server sends to the browser. */
@@ -41,6 +67,8 @@ export type ServerMsg =
   | { t: 'nickNotice'; room: string; from: string; to: string }
   | { t: 'nickChanged'; nick: string }
   | { t: 'system'; room?: string; text: string }
+  | { t: 'media'; room: string; state: MediaState | null }
+  | { t: 'sound'; room: string; sound: string; from: string }
   | { t: 'error'; text: string }
   | { t: 'pong' };
 

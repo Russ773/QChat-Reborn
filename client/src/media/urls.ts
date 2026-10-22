@@ -1,4 +1,4 @@
-import type { MediaKind } from '@qchat/shared';
+export type MediaKind = 'youtube' | 'audio' | 'video' | 'unknown';
 
 export interface DetectedMedia {
   kind: MediaKind;

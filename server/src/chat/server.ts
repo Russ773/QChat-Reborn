@@ -5,8 +5,10 @@ import {
   encodeMsg,
   normalizeRoom,
   validNick,
+  youTubeId,
   type ChatLine,
   type ClientMsg,
+  type MediaState,
   type ServerMsg,
 } from '@qchat/shared';
 
@@ -34,6 +36,7 @@ export class ChatServer {
   private conns = new Map<string, Conn>();
   private rooms = new Map<string, Set<string>>(); // room -> connection ids
   private history = new Map<string, ChatLine[]>(); // room -> recent lines
+  private media = new Map<string, MediaState>(); // room -> current synced media
 
   constructor(
     private log: (msg: string) => void = () => {},
@@ -70,6 +73,12 @@ export class ChatServer {
         return this.onSay(conn, msg.room, msg.text);
       case 'nick':
         return this.onNick(conn, msg.nick);
+      case 'playYouTube':
+        return this.onPlayYouTube(conn, msg.room, msg.ref, msg.title);
+      case 'mediaControl':
+        return this.onMediaControl(conn, msg.room, msg.op, msg.pos);
+      case 'playSound':
+        return this.onPlaySound(conn, msg.room, msg.sound);
       case 'ping':
         return this.send(conn, { t: 'pong' });
     }
@@ -110,6 +119,71 @@ export class ChatServer {
       history: this.history.get(room) ?? [],
     });
     this.broadcast(room, { t: 'presence', room, members: this.memberNicks(room) });
+    const media = this.media.get(room);
+    if (media) this.send(conn, { t: 'media', room, state: media });
+  }
+
+  private inRoom(conn: Conn, room: string): boolean {
+    return this.rooms.get(room)?.has(conn.id) ?? false;
+  }
+
+  private onPlayYouTube(conn: Conn, roomName: string, ref: string, title?: string): void {
+    const room = normalizeRoom(roomName);
+    if (!this.inRoom(conn, room)) return;
+    const id = youTubeId(ref);
+    if (!id) return this.send(conn, { t: 'error', text: 'That is not a valid YouTube link.' });
+    const cleanTitle = title ? title.slice(0, 120) : undefined;
+    const state: MediaState = {
+      kind: 'youtube',
+      ref: id,
+      title: cleanTitle,
+      by: conn.nick,
+      paused: false,
+      startedAt: Date.now(),
+      pausedPos: 0,
+    };
+    this.media.set(room, state);
+    this.broadcast(room, { t: 'media', room, state });
+    this.broadcast(room, { t: 'system', room, text: `${conn.nick} started a video${cleanTitle ? `: ${cleanTitle}` : ''}` });
+  }
+
+  private onMediaControl(
+    conn: Conn,
+    roomName: string,
+    op: 'pause' | 'resume' | 'seek' | 'stop',
+    pos?: number,
+  ): void {
+    const room = normalizeRoom(roomName);
+    if (!this.inRoom(conn, room)) return;
+    const state = this.media.get(room);
+    if (!state) return;
+    const now = Date.now();
+    if (op === 'stop') {
+      this.media.delete(room);
+      this.broadcast(room, { t: 'media', room, state: null });
+      this.broadcast(room, { t: 'system', room, text: `${conn.nick} stopped the video` });
+      return;
+    }
+    if (op === 'pause' && !state.paused) {
+      state.pausedPos = (now - state.startedAt) / 1000;
+      state.paused = true;
+    } else if (op === 'resume' && state.paused) {
+      state.startedAt = now - state.pausedPos * 1000;
+      state.paused = false;
+    } else if (op === 'seek' && typeof pos === 'number' && pos >= 0) {
+      if (state.paused) state.pausedPos = pos;
+      else state.startedAt = now - pos * 1000;
+    } else {
+      return;
+    }
+    this.broadcast(room, { t: 'media', room, state });
+  }
+
+  private onPlaySound(conn: Conn, roomName: string, sound: string): void {
+    const room = normalizeRoom(roomName);
+    if (!this.inRoom(conn, room)) return;
+    if (!/^[a-z0-9_-]{1,24}$/.test(sound)) return;
+    this.broadcast(room, { t: 'sound', room, sound, from: conn.nick });
   }
 
   private onLeave(conn: Conn, roomName: string, reason: string): void {

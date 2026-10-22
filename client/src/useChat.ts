@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
 import type { ServerMsg } from '@qchat/shared';
 import { ChatClient, type ChatStatus } from './chat/client.js';
+import { soundLabel } from './media/sounds.js';
 import type { AppState, ChatEvent, ChatEventKind, RoomState } from './types.js';
 
 export const DEFAULT_ROOM = '#lobby';
 
 let seq = 0;
+let soundSeq = 0;
 function makeEvent(kind: ChatEventKind, text: string, from?: string, self?: boolean): ChatEvent {
   return { id: `e${Date.now()}-${seq++}`, kind, text, from, ts: Date.now(), self };
 }
@@ -20,6 +22,7 @@ function initialState(nick: string): AppState {
     order: [],
     active: null,
     serverLog: [makeEvent('system', 'Connecting…')],
+    lastSound: null,
   };
 }
 
@@ -70,7 +73,7 @@ function reducer(state: AppState, action: Action): AppState {
         ts: l.ts,
         self: l.from === state.nick,
       }));
-      const room: RoomState = { name: msg.room, members: msg.members, events, unread: 0 };
+      const room: RoomState = { name: msg.room, members: msg.members, events, unread: 0, media: null };
       const order = state.order.includes(msg.room) ? state.order : [...state.order, msg.room];
       return { ...state, rooms: { ...state.rooms, [msg.room]: room }, order, active: msg.room };
     }
@@ -95,6 +98,15 @@ function reducer(state: AppState, action: Action): AppState {
 
     case 'presence':
       return patchRoom(state, msg.room, (r) => ({ ...r, members: msg.members }));
+
+    case 'media':
+      return patchRoom(state, msg.room, (r) => ({ ...r, media: msg.state }));
+
+    case 'sound': {
+      const ev = makeEvent('system', `${msg.from} played ${soundLabel(msg.sound)} 🔊`, msg.from);
+      const next = state.rooms[msg.room] ? pushEvent(state, msg.room, ev) : state;
+      return { ...next, lastSound: { id: ++soundSeq, room: msg.room, sound: msg.sound, from: msg.from } };
+    }
 
     case 'joinNotice':
       return pushEvent(state, msg.room, makeEvent('join', `${msg.nick} joined`, msg.nick));
@@ -132,6 +144,9 @@ export interface UseChat {
   say: (room: string, text: string) => void;
   setActive: (room: string) => void;
   changeNick: (nick: string) => void;
+  playSound: (room: string, sound: string) => void;
+  playYouTube: (room: string, ref: string, title?: string) => void;
+  mediaControl: (room: string, op: 'pause' | 'resume' | 'seek' | 'stop', pos?: number) => void;
 }
 
 export function useChat(): UseChat {
@@ -163,6 +178,28 @@ export function useChat(): UseChat {
   const say = useCallback((room: string, text: string) => clientRef.current?.say(room, text), []);
   const changeNick = useCallback((nick: string) => clientRef.current?.nick(nick), []);
   const setActive = useCallback((room: string) => dispatch({ type: 'setActive', room }), []);
+  const playSound = useCallback((room: string, sound: string) => clientRef.current?.playSound(room, sound), []);
+  const playYouTube = useCallback(
+    (room: string, ref: string, title?: string) => clientRef.current?.playYouTube(room, ref, title),
+    [],
+  );
+  const mediaControl = useCallback(
+    (room: string, op: 'pause' | 'resume' | 'seek' | 'stop', pos?: number) =>
+      clientRef.current?.mediaControl(room, op, pos),
+    [],
+  );
 
-  return { state, status: state.status, connect, join, leave, say, setActive, changeNick };
+  return {
+    state,
+    status: state.status,
+    connect,
+    join,
+    leave,
+    say,
+    setActive,
+    changeNick,
+    playSound,
+    playYouTube,
+    mediaControl,
+  };
 }

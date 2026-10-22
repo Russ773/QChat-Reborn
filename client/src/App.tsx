@@ -19,6 +19,8 @@ import { LogoMark, Wordmark } from './components/Logo.js';
 import { Message } from './components/Message.js';
 import { PreferencesModal } from './components/PreferencesModal.js';
 import { ProfileModal } from './components/ProfileModal.js';
+import { SoundPicker } from './components/SoundPicker.js';
+import { playSound as playSoundFx } from './media/sounds.js';
 import { useChat } from './useChat.js';
 
 const STATUS_LABEL: Record<string, string> = {
@@ -43,7 +45,15 @@ export default function App() {
   const [booting, setBooting] = useState<boolean>(() => !!getToken());
   const [modal, setModal] = useState<ModalTarget | null>(null);
   const [showPrefs, setShowPrefs] = useState(false);
+  const [autoplay, setAutoplay] = useState(true);
   const [draft, setDraft] = useState('');
+
+  // Play incoming sounds (your own always play; others respect autoplay).
+  useEffect(() => {
+    const ls = state.lastSound;
+    if (ls && (autoplay || ls.from === state.nick)) playSoundFx(ls.sound);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.lastSound?.id]);
 
   // Resume a stored session on first load.
   useEffect(() => {
@@ -54,6 +64,7 @@ export default function App() {
       .then((res) => {
         if (cancelled) return;
         setMyProfile(res.profile);
+        setAutoplay(res.prefs?.autoplay ?? true);
         chat.connect(res.account, t);
         setBooting(false);
       })
@@ -75,6 +86,7 @@ export default function App() {
     setTok(res.token);
     setMyProfile(res.profile);
     chat.connect(res.account, res.token);
+    me(res.token).then((r) => setAutoplay(r.prefs?.autoplay ?? true)).catch(() => {});
   };
   const doLogout = () => {
     if (token) logout(token);
@@ -213,6 +225,7 @@ export default function App() {
                 draft={draft}
                 setDraft={setDraft}
                 onSend={(text) => chat.say(room.name, text)}
+                onPlaySound={(id) => chat.playSound(room.name, id)}
               />
               <aside className="right-rail">
                 <MembersPanel members={room.members} onPick={openMember} />
@@ -242,7 +255,13 @@ export default function App() {
           onUploadAvatar={modal.editable ? onUploadAvatar : undefined}
         />
       )}
-      {showPrefs && token && <PreferencesModal token={token} onClose={() => setShowPrefs(false)} />}
+      {showPrefs && token && (
+        <PreferencesModal
+          token={token}
+          onClose={() => setShowPrefs(false)}
+          onSaved={(p) => setAutoplay(p.autoplay)}
+        />
+      )}
     </div>
   );
 }
@@ -395,11 +414,13 @@ function RoomChat({
   draft,
   setDraft,
   onSend,
+  onPlaySound,
 }: {
   events: ChatEvent[];
   draft: string;
   setDraft: React.Dispatch<React.SetStateAction<string>>;
   onSend: (text: string) => void;
+  onPlaySound: (id: string) => void;
 }) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -431,6 +452,7 @@ function RoomChat({
         })}
       </div>
       <form className="composer" onSubmit={submit}>
+        <SoundPicker onPlay={onPlaySound} />
         <EmojiPicker
           onPick={(emoji) => {
             setDraft((d) => d + emoji);
