@@ -42,11 +42,30 @@ export function YouTubePlayer({ videoId, sync, autoplay = true, onControl }: Pro
   const mountRef = useRef<HTMLDivElement | null>(null);
   const playerRef = useRef<any>(null);
   const ready = useRef(false);
-  const applying = useRef(false);
+  // Player events before this time are echoes of our own seek/play/pause calls
+  // (YouTube emits late PAUSED/BUFFERING events after a seek), not the user.
+  const ignoreUntil = useRef(0);
+  const settleTimer = useRef<number | null>(null);
+  const unloading = useRef(false);
   const syncRef = useRef(sync);
   syncRef.current = sync;
   const autoplayRef = useRef(autoplay);
   autoplayRef.current = autoplay;
+  const onControlRef = useRef(onControl);
+  onControlRef.current = onControl;
+
+  // Note when the page is going away so teardown events are not treated as input.
+  useEffect(() => {
+    const mark = () => {
+      unloading.current = true;
+    };
+    window.addEventListener('pagehide', mark);
+    window.addEventListener('beforeunload', mark);
+    return () => {
+      window.removeEventListener('pagehide', mark);
+      window.removeEventListener('beforeunload', mark);
+    };
+  }, []);
 
   // Create the player once.
   useEffect(() => {
@@ -68,6 +87,7 @@ export function YouTubePlayer({ videoId, sync, autoplay = true, onControl }: Pro
     });
     return () => {
       dead = true;
+      if (settleTimer.current) window.clearTimeout(settleTimer.current);
       try {
         playerRef.current?.destroy();
       } catch {
@@ -83,16 +103,13 @@ export function YouTubePlayer({ videoId, sync, autoplay = true, onControl }: Pro
   useEffect(() => {
     const p = playerRef.current;
     if (p && ready.current && p.getVideoData?.().video_id !== videoId) {
-      applying.current = true;
+      ignoreUntil.current = Date.now() + 2500;
       try {
         p.loadVideoById(videoId);
       } catch {
         /* ignore */
       }
-      window.setTimeout(() => {
-        applying.current = false;
-        applySync();
-      }, 400);
+      window.setTimeout(() => applySync(), 600);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoId]);
@@ -124,8 +141,18 @@ export function YouTubePlayer({ videoId, sync, autoplay = true, onControl }: Pro
     } catch {
       /* ignore */
     }
-    applying.current = true;
-    if (!driftOnly || Math.abs(cur - target) > 1.5) {
+    const YT = (window as any).YT;
+    let state = -2;
+    try {
+      state = p.getPlayerState();
+    } catch {
+      /* ignore */
+    }
+    // Only seek when we are properly out of sync; a loose threshold avoids
+    // fighting normal buffering jitter (and seeks while still loading).
+    const loading = state === YT?.PlayerState?.BUFFERING || state === YT?.PlayerState?.UNSTARTED;
+    const needsSeek = driftOnly ? !loading && Math.abs(cur - target) > 2.5 : true;    ignoreUntil.current = Date.now() + 2000;
+    if (needsSeek) {
       try {
         p.seekTo(Math.max(0, target), true);
       } catch {
@@ -133,33 +160,54 @@ export function YouTubePlayer({ videoId, sync, autoplay = true, onControl }: Pro
       }
     }
     try {
-      if (s.paused) p.pauseVideo();
-      else if (autoplayRef.current) p.playVideo();
+      if (s.paused) {
+        if (state !== YT?.PlayerState?.PAUSED) p.pauseVideo();
+      } else if (autoplayRef.current && state !== YT?.PlayerState?.PLAYING) {
+        p.playVideo();
+      }
     } catch {
       /* ignore */
     }
-    window.setTimeout(() => {
-      applying.current = false;
-    }, 350);
   }
 
+  /**
+   * A player event only counts as the user's own pause/resume if it is not an
+   * echo of our sync calls AND the player is still in that state after a short
+   * settle delay (transient states during seeks are dropped).
+   */
   function onPlayerState(e: any) {
-    if (applying.current || !onControl) return;
     const YT = (window as any).YT;
-    const s = syncRef.current;
-    if (!s || !YT) return;
-    if (e.data === YT.PlayerState.PAUSED && !s.paused) {
+    if (!onControlRef.current || !YT) return;
+    if (e.data !== YT.PlayerState.PAUSED && e.data !== YT.PlayerState.PLAYING) return;
+    if (Date.now() < ignoreUntil.current) return;
+    if (settleTimer.current) window.clearTimeout(settleTimer.current);
+    settleTimer.current = window.setTimeout(() => {
+      const p = playerRef.current;
+      const s = syncRef.current;
+      const ctl = onControlRef.current;
+      if (!p || !s || !ctl || Date.now() < ignoreUntil.current) return;
+      // Closing/reloading the tab or backgrounding it makes the iframe report
+      // PAUSED. That must never pause the room for everyone else.
+      if (unloading.current || document.visibilityState !== 'visible') return;
+      let state = -2;
       let cur = 0;
       try {
-        cur = e.target.getCurrentTime() || 0;
+        // A real click or keypress on the player focuses its iframe; teardown
+        // and other automatic pauses do not.
+        if (document.activeElement !== p.getIframe?.()) return;
+        state = p.getPlayerState();
+        cur = p.getCurrentTime() || 0;
       } catch {
-        /* ignore */
+        return;
       }
-      onControl('seek', cur);
-      onControl('pause');
-    } else if (e.data === YT.PlayerState.PLAYING && s.paused) {
-      onControl('resume');
-    }
+      if (state === YT.PlayerState.PAUSED && !s.paused) {
+        ctl('seek', cur);
+        ctl('pause');
+      } else if (state === YT.PlayerState.PLAYING && s.paused) {
+        ctl('seek', cur);
+        ctl('resume');
+      }
+    }, 500);
   }
 
   return (
