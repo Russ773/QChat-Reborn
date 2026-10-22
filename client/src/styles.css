@@ -356,3 +356,24 @@ button.secondary:hover { background: rgba(255, 255, 255, 0.12); filter: none; }
 .sound-item:hover { background: rgba(255, 255, 255, 0.14); filter: none; transform: translateY(-1px); }
 .si-emoji { font-size: 1.4rem; }
 .si-label { font-size: 0.72rem; color: var(--dim); }
+
+/* --- Media panel (YouTube) ------------------------------------------------ */
+.media-panel { padding: 10px 14px; border-bottom: 1px solid var(--line-soft); }
+.media-input { display: flex; gap: 8px; }
+.media-input input { flex: 1; min-width: 0; border-radius: 999px; }
+.media-input button { border-radius: 999px; padding: 9px 16px; white-space: nowrap; }
+.media-stage { margin-top: 10px; }
+.media-prompt, .media-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+}
+.media-prompt {
+  margin-top: 10px; padding: 10px 14px; border-radius: var(--r);
+  background: var(--glass); border: 1px solid var(--line);
+}
+.media-head { margin-bottom: 8px; color: var(--dim); font-size: 0.86rem; }
+.media-by { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.media-controls { display: flex; gap: 8px; flex: 0 0 auto; }
+.media-controls button { padding: 6px 14px; border-radius: var(--r-sm); font-size: 0.85rem; }
+.media-x { background: var(--glass-2); color: var(--paper); border: 1px solid var(--line); padding: 4px 9px; border-radius: 8px; }
+.yt-frame { width: 100%; max-width: 540px; margin: 0 auto; aspect-ratio: 16 / 9; border-radius: 12px; overflow: hidden; background: #000; }
+.yt-frame .yt-mount, .yt-frame iframe { width: 100%; height: 100%; display: block; border: 0; }

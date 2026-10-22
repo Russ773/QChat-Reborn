@@ -16,6 +16,7 @@ import {
 import { Avatar } from './components/Avatar.js';
 import { EmojiPicker } from './components/EmojiPicker.js';
 import { LogoMark, Wordmark } from './components/Logo.js';
+import { MediaPanel } from './components/MediaPanel.js';
 import { Message } from './components/Message.js';
 import { PreferencesModal } from './components/PreferencesModal.js';
 import { ProfileModal } from './components/ProfileModal.js';
@@ -219,6 +220,13 @@ export default function App() {
                 <button className="leave" onClick={() => chat.leave(room.name)}>Leave</button>
               </div>
             </header>
+            <MediaPanel
+              key={room.name}
+              roomMedia={room.media}
+              autoplay={autoplay}
+              onPlayRoom={(ref) => chat.playYouTube(room.name, ref)}
+              onControlRoom={(op, pos) => chat.mediaControl(room.name, op, pos)}
+            />
             <div className="content">
               <RoomChat
                 events={room.events}
