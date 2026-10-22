@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Profile, RoomRole } from '@qchat/shared';
-import { dmKey, isDmKey } from './types.js';
+import { dmKey, isDmKey, type ChatEvent } from './types.js';
 import {
   getProfile,
   getToken,
@@ -9,6 +9,7 @@ import {
   saveProfile,
   setToken,
   uploadAvatar,
+  uploadImage,
   type AuthResult,
   type Role,
 } from './api.js';
@@ -21,9 +22,13 @@ import { MediaPanel } from './components/MediaPanel.js';
 import { NewMessageModal } from './components/NewMessageModal.js';
 import { PreferencesModal } from './components/PreferencesModal.js';
 import { ProfileModal } from './components/ProfileModal.js';
+import { ReportModal } from './components/ReportModal.js';
+import { RoomSettingsModal } from './components/RoomSettingsModal.js';
 import { RoomsModal } from './components/RoomsModal.js';
+import { SearchPanel } from './components/SearchPanel.js';
 import { SoundPicker } from './components/SoundPicker.js';
 import { playSound as playSoundFx } from './media/sounds.js';
+import { showDesktopNotification } from './notify.js';
 import { useAvatars } from './useAvatars.js';
 import { useChat } from './useChat.js';
 
@@ -54,6 +59,10 @@ export default function App() {
   const [showPrefs, setShowPrefs] = useState(false);
   const [showRooms, setShowRooms] = useState(false);
   const [showNewDm, setShowNewDm] = useState(false);
+  const [showAddFriend, setShowAddFriend] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [reporting, setReporting] = useState<{ room: string; msg: ChatEvent } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [autoplay, setAutoplay] = useState(true);
 
@@ -73,7 +82,13 @@ export default function App() {
     if (view === 'admin' && role && role !== 'admin') go('chat');
   }, [view, role, go]);
 
-  // Surface server messages (bad room name, you were removed...) as a short toast.
+  // Switching to another room or chat closes room-specific panels.
+  useEffect(() => {
+    setSearching(false);
+    setShowSettings(false);
+  }, [state.active]);
+
+  // Surface server messages (bad room name, "friend request sent"...) as a short toast.
   const lastLog = state.serverLog[state.serverLog.length - 1];
   useEffect(() => {
     if (lastLog?.kind !== 'notice') return;
@@ -89,17 +104,19 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.lastSound?.id]);
 
-  // A soft sound for a mention or a new private message.
+  // A mention or a new private message: a soft sound, and a desktop notification if allowed.
   useEffect(() => {
     const a = state.alert;
-    if (a && autoplay) playSoundFx(a.kind === 'dm' ? 'ding' : 'pop');
+    if (!a) return;
+    if (autoplay) playSoundFx(a.kind === 'dm' ? 'ding' : 'pop');
+    showDesktopNotification(a.kind === 'dm' ? `Message from ${a.from}` : `${a.from} mentioned you`, a.text);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.alert?.id]);
 
-  // Unread private messages and mentions show in the browser tab.
+  // Unread private messages, mentions and friend requests show in the browser tab.
   const unreadDms = state.threads.reduce((n, t) => n + t.unread, 0);
   const unreadMentions = Object.values(state.rooms).reduce((n, r) => n + r.mentions, 0);
-  const attention = unreadDms + unreadMentions;
+  const attention = unreadDms + unreadMentions + state.requests.incoming.length;
   useEffect(() => {
     document.title = attention > 0 ? `(${attention}) QChat Reborn` : 'QChat Reborn';
   }, [attention]);
@@ -174,6 +191,14 @@ export default function App() {
     return url;
   };
 
+  const friendStatus = (name: string): 'none' | 'friends' | 'sent' | 'incoming' => {
+    const l = name.toLowerCase();
+    if (state.friends.some((f) => f.name.toLowerCase() === l)) return 'friends';
+    if (state.requests.outgoing.some((n) => n.toLowerCase() === l)) return 'sent';
+    if (state.requests.incoming.some((n) => n.toLowerCase() === l)) return 'incoming';
+    return 'none';
+  };
+
   // Conversations to list in the sidebar: the saved ones, plus any chat you just opened.
   const dmList = useMemo(() => {
     const seen = new Set(state.threads.map((t) => dmKey(t.with)));
@@ -198,6 +223,30 @@ export default function App() {
   const myRank = room ? roleRank(room.roles[state.nick]) : 0;
   const disconnected = status === 'closed' || status === 'error';
   const ann = state.announcement;
+
+  /** Moderator buttons for a member's profile, limited to what you are allowed to do to them. */
+  const modToolsFor = (target: string) => {
+    if (!room || myRank < 2 || target.toLowerCase() === state.nick.toLowerCase()) return undefined;
+    const theirs = roleRank(room.roles[target]);
+    if (theirs >= myRank) return undefined;
+    const run = (cmd: string) => () => {
+      chat.say(room.name, cmd);
+      setModal(null);
+    };
+    const tools = [
+      { label: 'Kick', run: run(`/kick ${target}`), danger: true },
+      { label: 'Mute 10 min', run: run(`/mute ${target} 10`), danger: true },
+      { label: 'Ban', run: run(`/ban ${target}`), danger: true },
+    ];
+    if (myRank >= 3) {
+      tools.push(
+        theirs === 2
+          ? { label: 'Remove moderator', run: run(`/unmod ${target}`), danger: false }
+          : { label: 'Make moderator', run: run(`/mod ${target}`), danger: false },
+      );
+    }
+    return tools;
+  };
 
   return (
     <div className="app">
@@ -246,52 +295,90 @@ export default function App() {
           <span className="rooms-btn-plus">+ New</span>
         </button>
 
-        <div className="nav-label">My rooms</div>
-        <nav className="buffers">
-          {state.order.length === 0 && <p className="buffers-empty">You are not in any rooms yet.</p>}
-          {state.order.map((name) => {
-            const r = state.rooms[name];
-            return (
-              <button
-                key={name}
-                className={`buffer ${active === name ? 'active' : ''}`}
-                onClick={() => chat.setActive(name)}
-              >
-                <span className="buffer-name">{roomLabel(name)}</span>
-                {r && r.mentions > 0 ? (
-                  <span className="badge mention" title="You were mentioned">@{r.mentions}</span>
-                ) : (
-                  r && r.unread > 0 && <span className="badge">{r.unread}</span>
-                )}
-              </button>
-            );
-          })}
-        </nav>
+        <div className="side-scroll">
+          <div className="nav-label">My rooms</div>
+          <nav className="buffers">
+            {state.order.length === 0 && <p className="buffers-empty">You are not in any rooms yet.</p>}
+            {state.order.map((name) => {
+              const r = state.rooms[name];
+              return (
+                <button
+                  key={name}
+                  className={`buffer ${active === name ? 'active' : ''}`}
+                  onClick={() => chat.setActive(name)}
+                >
+                  <span className="buffer-name">{roomLabel(name)}</span>
+                  {r && r.mentions > 0 ? (
+                    <span className="badge mention" title="You were mentioned">@{r.mentions}</span>
+                  ) : (
+                    r && r.unread > 0 && <span className="badge">{r.unread}</span>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
 
-        <div className="nav-label-row">
-          <span className="nav-label">Private messages</span>
-          <button className="mini-plus" onClick={() => setShowNewDm(true)} title="New private message" aria-label="New private message">
-            +
-          </button>
-        </div>
-        <nav className="buffers">
-          {dmList.length === 0 && <p className="buffers-empty">No private messages yet.</p>}
-          {dmList.map((t) => {
-            const key = dmKey(t.with);
-            return (
-              <button
-                key={key}
-                className={`buffer dm ${active === key ? 'active' : ''}`}
-                onClick={() => chat.setActive(key)}
-                title={t.last || undefined}
-              >
-                <Avatar name={t.with} src={avatarFor(t.with)} size={22} />
-                <span className="buffer-name">{t.with}</span>
-                {t.unread > 0 && <span className="badge">{t.unread}</span>}
+          <div className="nav-label-row">
+            <span className="nav-label">Private messages</span>
+            <button className="mini-plus" onClick={() => setShowNewDm(true)} title="New private message" aria-label="New private message">
+              +
+            </button>
+          </div>
+          <nav className="buffers">
+            {dmList.length === 0 && <p className="buffers-empty">No private messages yet.</p>}
+            {dmList.map((t) => {
+              const key = dmKey(t.with);
+              return (
+                <button
+                  key={key}
+                  className={`buffer dm ${active === key ? 'active' : ''}`}
+                  onClick={() => chat.setActive(key)}
+                  title={t.last || undefined}
+                >
+                  <Avatar name={t.with} src={avatarFor(t.with)} size={22} />
+                  <span className="buffer-name">{t.with}</span>
+                  {t.unread > 0 && <span className="badge">{t.unread}</span>}
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className="nav-label-row">
+            <span className="nav-label">
+              Friends{state.friends.length > 0 ? ` · ${state.friends.filter((f) => f.online).length} online` : ''}
+            </span>
+            <button className="mini-plus" onClick={() => setShowAddFriend(true)} title="Add a friend" aria-label="Add a friend">
+              +
+            </button>
+          </div>
+          {state.requests.incoming.length > 0 && (
+            <div className="friend-requests">
+              {state.requests.incoming.map((n) => (
+                <div className="friend-req" key={n}>
+                  <span>
+                    <b>{n}</b> wants to be friends
+                  </span>
+                  <span className="friend-req-btns">
+                    <button className="mini" onClick={() => chat.friendRespond(n, true)}>Accept</button>
+                    <button className="mini" onClick={() => chat.friendRespond(n, false)}>Decline</button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          <nav className="buffers">
+            {state.friends.length === 0 && state.requests.incoming.length === 0 && (
+              <p className="buffers-empty">No friends yet. Add someone with +.</p>
+            )}
+            {state.friends.map((f) => (
+              <button key={f.name} className="buffer friend" onClick={() => chat.openDm(f.name)} title="Send a message">
+                <span className={`presence ${f.online ? 'on' : ''}`} aria-label={f.online ? 'online' : 'offline'} />
+                <Avatar name={f.name} src={avatarFor(f.name)} size={22} />
+                <span className={`buffer-name ${f.online ? '' : 'offline'}`}>{f.name}</span>
               </button>
-            );
-          })}
-        </nav>
+            ))}
+          </nav>
+        </div>
       </aside>
 
       <main className="main">
@@ -308,6 +395,30 @@ export default function App() {
                 )}
               </div>
               <div className="chan-actions">
+                <button
+                  className={`head-btn ${searching ? 'active' : ''}`}
+                  title="Search this room"
+                  aria-label="Search this room"
+                  onClick={() => {
+                    if (searching) chat.clearSearch(room.name);
+                    setSearching((s) => !s);
+                  }}
+                >
+                  🔍
+                </button>
+                {myRank >= 2 && (
+                  <button
+                    className="head-btn"
+                    title="Room settings"
+                    aria-label="Room settings"
+                    onClick={() => {
+                      chat.openRoomAdmin(room.name);
+                      setShowSettings(true);
+                    }}
+                  >
+                    ⚙
+                  </button>
+                )}
                 <button className="leave" onClick={() => chat.leave(room.name)}>Leave</button>
               </div>
             </header>
@@ -318,6 +429,17 @@ export default function App() {
               onPlayRoom={(ref) => chat.playYouTube(room.name, ref)}
               onControlRoom={(op, pos) => chat.mediaControl(room.name, op, pos)}
             />
+            {searching && (
+              <SearchPanel
+                room={room.name}
+                result={room.search}
+                onSearch={(q) => chat.search(room.name, q)}
+                onClose={() => {
+                  chat.clearSearch(room.name);
+                  setSearching(false);
+                }}
+              />
+            )}
             <div className="content">
               <Conversation
                 key={room.name}
@@ -330,7 +452,7 @@ export default function App() {
                 avatarFor={avatarFor}
                 placeholder={`Message ${roomLabel(room.name)}`}
                 commandRank={myRank}
-                onSend={(text) => chat.say(room.name, text)}
+                onSend={(text, extra) => chat.say(room.name, text, extra)}
                 onTyping={() => chat.typing(room.name)}
                 tools={<SoundPicker onPlay={(id) => chat.playSound(room.name, id)} />}
                 canModerate={myRank >= 2}
@@ -338,6 +460,17 @@ export default function App() {
                 onDelete={(id) => chat.deleteMessage(room.name, id)}
                 onProfile={openMember}
                 onClear={() => chat.clearRoom(room.name)}
+                rich={{
+                  onReact: (id, emoji) => chat.react(room.name, id, emoji),
+                  onReport: (id) => {
+                    const msg = room.events.find((e) => e.id === id);
+                    if (msg) setReporting({ room: room.name, msg });
+                  },
+                  onUpload: async (file) => {
+                    if (!token) throw new Error('Not logged in.');
+                    return (await uploadImage(token, file)).name;
+                  },
+                }}
               />
               <aside className="right-rail">
                 <MembersPanel
@@ -414,6 +547,17 @@ export default function App() {
                 }
           }
           canMessage={modal.allowPm}
+          friend={
+            modal.editable
+              ? undefined
+              : {
+                  status: friendStatus(modal.account),
+                  onAdd: () => chat.friendRequest(modal.account),
+                  onRemove: () => chat.friendRemove(modal.account),
+                  onAccept: () => chat.friendRespond(modal.account, true),
+                }
+          }
+          modTools={modal.editable ? undefined : modToolsFor(modal.account)}
         />
       )}
       {showRooms && (
@@ -427,6 +571,39 @@ export default function App() {
         />
       )}
       {showNewDm && <NewMessageModal me={state.nick} onStart={chat.openDm} onClose={() => setShowNewDm(false)} />}
+      {showAddFriend && (
+        <NewMessageModal
+          me={state.nick}
+          title="Add a friend"
+          blurb="Type the name of the member you want to add. They get a request to accept."
+          cta="Send request"
+          needsPm={false}
+          onStart={chat.friendRequest}
+          onClose={() => setShowAddFriend(false)}
+        />
+      )}
+      {showSettings && room && (
+        <RoomSettingsModal
+          room={room.name}
+          info={state.roomAdmin && state.roomAdmin.room === room.name ? state.roomAdmin : null}
+          canManageMods={myRank >= 3}
+          onCommand={(cmd) => {
+            chat.say(room.name, cmd);
+            window.setTimeout(() => chat.openRoomAdmin(room.name), 400);
+          }}
+          onClose={() => {
+            setShowSettings(false);
+            chat.closeRoomAdmin();
+          }}
+        />
+      )}
+      {reporting && (
+        <ReportModal
+          message={reporting.msg}
+          onSend={(reason) => chat.report(reporting.room, reporting.msg.id, reason)}
+          onClose={() => setReporting(null)}
+        />
+      )}
       {toast && <div className="toast" role="status">{toast}</div>}
       {showPrefs && token && (
         <PreferencesModal

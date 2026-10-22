@@ -4,6 +4,11 @@ import type { ChatEvent } from '../types.js';
 import { EmojiPicker } from './EmojiPicker.js';
 import { Message } from './Message.js';
 
+export interface SendExtra {
+  replyTo?: string;
+  image?: string;
+}
+
 interface Props {
   events: ChatEvent[];
   more: boolean;
@@ -17,7 +22,7 @@ interface Props {
   placeholder: string;
   /** Rooms support slash commands; private chats only /me. */
   commandRank: number | null;
-  onSend: (text: string) => void;
+  onSend: (text: string, extra?: SendExtra) => void;
   onTyping: () => void;
   /** Extra buttons before the emoji picker (the soundboard in rooms). */
   tools?: ReactNode;
@@ -27,9 +32,18 @@ interface Props {
   onDelete: (id: string) => void;
   onProfile: (name: string) => void;
   onClear?: () => void;
+  /** Room-only extras: replies, reactions, reports and pictures. */
+  rich?: {
+    onReact: (id: string, emoji: string) => void;
+    onReport: (id: string) => void;
+    /** Upload a picture and return its stored name. */
+    onUpload: (file: File) => Promise<string>;
+  };
 }
 
 const GROUP_GAP = 5 * 60 * 1000;
+const MAX_IMAGE = 3 * 1024 * 1024;
+const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 
 function typingLabel(names: string[]): string {
   if (names.length === 0) return '';
@@ -38,10 +52,17 @@ function typingLabel(names: string[]): string {
   return 'Several people are typing…';
 }
 
+const snippet = (e: ChatEvent) => (e.text || (e.image ? 'a picture' : '')).slice(0, 80);
+
 export function Conversation(p: Props) {
   const [draft, setDraft] = useState('');
+  const [replyTo, setReplyTo] = useState<ChatEvent | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
   const scroller = useRef<HTMLDivElement | null>(null);
   const input = useRef<HTMLInputElement | null>(null);
+  const fileInput = useRef<HTMLInputElement | null>(null);
   const stick = useRef(true);
   const last = useRef({ firstId: '', height: 0, count: 0 });
   const lastTypingSent = useRef(0);
@@ -95,7 +116,10 @@ export function Conversation(p: Props) {
     if (!text) return;
     setDraft('');
     if (p.commandRank !== null && text.toLowerCase() === '/clear') return p.onClear?.();
-    p.onSend(text);
+    // Commands are never replies.
+    const isCommand = text.startsWith('/') && !text.startsWith('//');
+    p.onSend(text, replyTo && !isCommand ? { replyTo: replyTo.id } : undefined);
+    setReplyTo(null);
   };
 
   const onChange = (value: string) => {
@@ -107,8 +131,52 @@ export function Conversation(p: Props) {
     }
   };
 
+  /** Upload a picture and post it (with whatever is typed as its caption). */
+  const attach = async (file: File | undefined | null) => {
+    if (!file || !p.rich) return;
+    setUploadError(null);
+    if (!IMAGE_TYPES.includes(file.type)) return setUploadError('Only PNG, JPG, GIF and WebP pictures can be shared.');
+    if (file.size > MAX_IMAGE) return setUploadError('That picture is too big. The limit is 3 MB.');
+    setUploading(true);
+    try {
+      const name = await p.rich.onUpload(file);
+      p.onSend(draft.trim(), { image: name, ...(replyTo ? { replyTo: replyTo.id } : {}) });
+      setDraft('');
+      setReplyTo(null);
+    } catch (err) {
+      setUploadError((err as Error).message);
+    } finally {
+      setUploading(false);
+      if (fileInput.current) fileInput.current.value = '';
+    }
+  };
+
+  const onPaste = (e: React.ClipboardEvent) => {
+    const file = [...e.clipboardData.files].find((f) => f.type.startsWith('image/'));
+    if (file && p.rich) {
+      e.preventDefault();
+      void attach(file);
+    }
+  };
+
   return (
-    <div className="chat">
+    <div
+      className={`chat ${dragging ? 'dragging' : ''}`}
+      onDragOver={(e) => {
+        if (p.rich && e.dataTransfer.types.includes('Files')) {
+          e.preventDefault();
+          setDragging(true);
+        }
+      }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={(e) => {
+        setDragging(false);
+        if (!p.rich) return;
+        e.preventDefault();
+        void attach(e.dataTransfer.files[0]);
+      }}
+    >
+      {dragging && <div className="drop-hint">Drop a picture to share it</div>}
       <div className="messages" ref={scroller} onScroll={onScroll}>
         {p.more && (
           <button className="load-earlier" onClick={p.onLoadEarlier} disabled={p.loadingMore}>
@@ -121,23 +189,51 @@ export function Conversation(p: Props) {
             ev.kind === 'message' && prev?.kind === 'message' && prev.from === ev.from && ev.ts - prev.ts < GROUP_GAP;
           const editable = ev.self && ev.kind === 'message';
           const deletable = (ev.kind === 'message' || ev.kind === 'action') && (ev.self || p.canModerate);
+          const social = !!p.rich && (ev.kind === 'message' || ev.kind === 'action');
           return (
             <Message
               key={ev.id}
               event={ev}
+              me={p.me}
               grouped={grouped}
               avatar={ev.from ? p.avatarFor(ev.from) : undefined}
               onProfile={p.onProfile}
               onEdit={editable ? (text) => p.onEdit(ev.id, text) : undefined}
               onDelete={deletable ? () => p.onDelete(ev.id) : undefined}
+              onReply={
+                social
+                  ? () => {
+                      setReplyTo(ev);
+                      input.current?.focus();
+                    }
+                  : undefined
+              }
+              onReact={social ? (emoji) => p.rich!.onReact(ev.id, emoji) : undefined}
+              onReport={social && !ev.self ? () => p.rich!.onReport(ev.id) : undefined}
             />
           );
         })}
       </div>
 
       <div className="typing-line" aria-live="polite">
-        {typingLabel(typers)}
+        {uploading ? 'Uploading picture…' : typingLabel(typers)}
       </div>
+
+      {uploadError && (
+        <div className="upload-error" role="alert">
+          {uploadError}
+          <button type="button" onClick={() => setUploadError(null)} aria-label="Dismiss">✕</button>
+        </div>
+      )}
+
+      {replyTo && (
+        <div className="reply-bar">
+          <span>
+            Replying to <b>{replyTo.from}</b>: {snippet(replyTo)}
+          </span>
+          <button type="button" onClick={() => setReplyTo(null)} aria-label="Cancel reply">✕</button>
+        </div>
+      )}
 
       {hints.length > 0 && (
         <div className="cmd-hints" role="listbox">
@@ -160,6 +256,27 @@ export function Conversation(p: Props) {
 
       <form className="composer" onSubmit={submit}>
         {p.tools}
+        {p.rich && (
+          <>
+            <button
+              type="button"
+              className="attach-btn"
+              title="Share a picture"
+              aria-label="Share a picture"
+              disabled={uploading}
+              onClick={() => fileInput.current?.click()}
+            >
+              📎
+            </button>
+            <input
+              ref={fileInput}
+              type="file"
+              accept={IMAGE_TYPES.join(',')}
+              hidden
+              onChange={(e) => void attach(e.target.files?.[0])}
+            />
+          </>
+        )}
         <EmojiPicker
           onPick={(emoji) => {
             setDraft((d) => d + emoji);
@@ -170,6 +287,8 @@ export function Conversation(p: Props) {
           ref={input}
           value={draft}
           onChange={(e) => onChange(e.target.value)}
+          onPaste={onPaste}
+          onKeyDown={(e) => e.key === 'Escape' && setReplyTo(null)}
           placeholder={p.placeholder}
           maxLength={2000}
         />

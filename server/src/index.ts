@@ -9,6 +9,7 @@ import { handleApi } from './api.js';
 import { ChatServer } from './chat/server.js';
 import { getPrefs } from './profiles.js';
 import { getSettings } from './settings.js';
+import { UPLOAD_MIME, UPLOAD_NAME_RE, uploadsDir } from './uploads.js';
 
 const HTTP_PORT = Number(process.env.HTTP_PORT ?? 8080);
 const log = (msg: string) => console.log(`[qchat] ${new Date().toISOString()} ${msg}`);
@@ -53,6 +54,10 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<vo
     serveAvatar(res, reqPath);
     return;
   }
+  if (reqPath.startsWith('/uploads/')) {
+    serveUpload(res, reqPath);
+    return;
+  }
   if (!existsSync(clientDir)) {
     res
       .writeHead(200, { 'content-type': 'text/html' })
@@ -81,6 +86,24 @@ function serveAvatar(res: ServerResponse, urlPath: string): void {
   res.writeHead(200, {
     'content-type': MIME[extname(file)] ?? 'application/octet-stream',
     'cache-control': 'public, max-age=3600',
+  });
+  createReadStream(file).pipe(res);
+}
+
+/** Shared pictures. Only names we generated are served, and only as the image type they really are. */
+function serveUpload(res: ServerResponse, urlPath: string): void {
+  const name = urlPath.slice('/uploads/'.length);
+  const file = join(uploadsDir, name);
+  if (!UPLOAD_NAME_RE.test(name) || !existsSync(file)) {
+    res.writeHead(404).end('not found');
+    return;
+  }
+  res.writeHead(200, {
+    'content-type': UPLOAD_MIME[extname(name).slice(1)] ?? 'application/octet-stream',
+    'cache-control': 'public, max-age=31536000, immutable',
+    // Never let a browser guess a different type, and never run anything from here.
+    'x-content-type-options': 'nosniff',
+    'content-security-policy': "default-src 'none'; sandbox",
   });
   createReadStream(file).pipe(res);
 }

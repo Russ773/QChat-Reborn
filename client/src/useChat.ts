@@ -54,6 +54,9 @@ const lineToEvent = (l: ChatLine | Dm, me: string, inRoom = true): ChatEvent => 
   self: l.from === me,
   edited: 'edited' in l ? l.edited : undefined,
   mention: inRoom && l.from !== me && mentions(l.text, me),
+  replyTo: 'replyTo' in l ? l.replyTo : undefined,
+  image: 'image' in l ? l.image : undefined,
+  reactions: 'reactions' in l ? l.reactions : undefined,
 });
 
 /** Put older events before the ones we already have, without duplicates. */
@@ -77,6 +80,9 @@ function initialState(nick: string): AppState {
     announcement: null,
     lastSound: null,
     alert: null,
+    friends: [],
+    requests: { incoming: [], outgoing: [] },
+    roomAdmin: null,
   };
 }
 
@@ -86,6 +92,8 @@ type Action =
   | { type: 'setActive'; key: string }
   | { type: 'openDm'; name: string }
   | { type: 'clearRoom'; room: string }
+  | { type: 'clearSearch'; room: string }
+  | { type: 'closeRoomAdmin' }
   | { type: 'loadingMore'; key: string }
   | { type: 'dismissAnnouncement' };
 
@@ -126,6 +134,12 @@ function reducer(state: AppState, action: Action): AppState {
 
     case 'clearRoom':
       return patchRoom(state, action.room, (r) => ({ ...r, events: [], more: false }));
+
+    case 'clearSearch':
+      return patchRoom(state, action.room, (r) => ({ ...r, search: null }));
+
+    case 'closeRoomAdmin':
+      return { ...state, roomAdmin: null };
 
     case 'loadingMore':
       return isDmKey(action.key)
@@ -176,6 +190,7 @@ function reducer(state: AppState, action: Action): AppState {
         more: msg.more,
         loadingMore: false,
         typing: {},
+        search: null,
       };
       const isNew = !state.order.includes(msg.room);
       const order = isNew ? [...state.order, msg.room] : state.order;
@@ -202,9 +217,37 @@ function reducer(state: AppState, action: Action): AppState {
         delete typing[msg.line.from];
         return { ...r, typing };
       });
-      if (ev.mention) next = { ...next, alert: { id: ++alertSeq, kind: 'mention', from: msg.line.from } };
+      if (ev.mention) {
+        next = { ...next, alert: { id: ++alertSeq, kind: 'mention', from: msg.line.from, text: msg.line.text } };
+      }
       return next;
     }
+
+    case 'reactions':
+      return patchRoom(state, msg.room, (r) => ({
+        ...r,
+        events: r.events.map((e) => (e.id === msg.id ? { ...e, reactions: msg.reactions } : e)),
+        // Keep any open search results in step too.
+        search: r.search
+          ? { ...r.search, events: r.search.events.map((e) => (e.id === msg.id ? { ...e, reactions: msg.reactions } : e)) }
+          : null,
+      }));
+
+    case 'searchResults':
+      return patchRoom(state, msg.room, (r) => ({
+        ...r,
+        search: { q: msg.q, events: msg.lines.map((l) => lineToEvent(l, me)) },
+      }));
+
+    case 'roomAdmin':
+      return { ...state, roomAdmin: { room: msg.room, owner: msg.owner, bans: msg.bans, mods: msg.mods, mutes: msg.mutes } };
+
+    case 'friends':
+      return { ...state, friends: msg.friends, requests: { incoming: msg.incoming, outgoing: msg.outgoing } };
+
+    case 'info':
+      // A friendly confirmation: shown as a toast, like an error but not alarming.
+      return { ...state, serverLog: [...state.serverLog, makeEvent('notice', msg.text)] };
 
     case 'history':
       return patchRoom(state, msg.room, (r) => ({
@@ -286,7 +329,9 @@ function reducer(state: AppState, action: Action): AppState {
       const threads = [thread, ...state.threads.filter((t) => dmKey(t.with) !== key)];
 
       const next = { ...state, dms, threads };
-      return mine ? next : { ...next, alert: viewing && !document.hidden ? next.alert : { id: ++alertSeq, kind: 'dm', from: other } };
+      return mine
+        ? next
+        : { ...next, alert: viewing && !document.hidden ? next.alert : { id: ++alertSeq, kind: 'dm', from: other, text: m.text } };
     }
 
     case 'dmHistory': {
@@ -330,7 +375,16 @@ export interface UseChat {
   reconnect: () => void;
   join: (room: string) => void;
   leave: (room: string) => void;
-  say: (room: string, text: string) => void;
+  say: (room: string, text: string, extra?: { replyTo?: string; image?: string }) => void;
+  react: (room: string, id: string, emoji: string) => void;
+  report: (room: string, id: string, reason?: string) => void;
+  search: (room: string, q: string) => void;
+  clearSearch: (room: string) => void;
+  openRoomAdmin: (room: string) => void;
+  closeRoomAdmin: () => void;
+  friendRequest: (to: string) => void;
+  friendRespond: (from: string, accept: boolean) => void;
+  friendRemove: (who: string) => void;
   setActive: (key: string) => void;
   playSound: (room: string, sound: string) => void;
   playYouTube: (room: string, ref: string, title?: string) => void;
@@ -425,7 +479,19 @@ export function useChat(): UseChat {
 
   const join = useCallback((room: string) => clientRef.current?.join(room), []);
   const leave = useCallback((room: string) => clientRef.current?.leave(room), []);
-  const say = useCallback((room: string, text: string) => clientRef.current?.say(room, text), []);
+  const say = useCallback(
+    (room: string, text: string, extra?: { replyTo?: string; image?: string }) => clientRef.current?.say(room, text, extra),
+    [],
+  );
+  const react = useCallback((room: string, id: string, emoji: string) => clientRef.current?.react(room, id, emoji), []);
+  const report = useCallback((room: string, id: string, reason?: string) => clientRef.current?.report(room, id, reason), []);
+  const search = useCallback((room: string, q: string) => clientRef.current?.search(room, q), []);
+  const clearSearch = useCallback((room: string) => dispatch({ type: 'clearSearch', room }), []);
+  const openRoomAdmin = useCallback((room: string) => clientRef.current?.roomAdmin(room), []);
+  const closeRoomAdmin = useCallback(() => dispatch({ type: 'closeRoomAdmin' }), []);
+  const friendRequest = useCallback((to: string) => clientRef.current?.friendRequest(to), []);
+  const friendRespond = useCallback((from: string, accept: boolean) => clientRef.current?.friendRespond(from, accept), []);
+  const friendRemove = useCallback((who: string) => clientRef.current?.friendRemove(who), []);
   const setActive = useCallback((key: string) => dispatch({ type: 'setActive', key }), []);
   const playSound = useCallback((room: string, sound: string) => clientRef.current?.playSound(room, sound), []);
   const listRooms = useCallback(() => clientRef.current?.listRooms(), []);
@@ -475,6 +541,15 @@ export function useChat(): UseChat {
     join,
     leave,
     say,
+    react,
+    report,
+    search,
+    clearSearch,
+    openRoomAdmin,
+    closeRoomAdmin,
+    friendRequest,
+    friendRespond,
+    friendRemove,
     setActive,
     playSound,
     playYouTube,

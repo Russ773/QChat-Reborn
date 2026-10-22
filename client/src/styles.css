@@ -708,3 +708,115 @@ button.mini.danger:hover { background: rgba(255, 77, 109, 0.3); }
   .mr-actions { justify-content: flex-start; }
   .audit-row { grid-template-columns: 1fr; gap: 2px; }
 }
+
+/* --- Wave 2: sidebar scroll, friends, header buttons -------------------------- */
+.side-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 2px; }
+.chan-actions { display: flex; align-items: center; gap: 8px; }
+.head-btn {
+  width: 34px; height: 34px; padding: 0; border-radius: 10px; font-size: 1rem;
+  background: var(--glass-2); border: 1px solid var(--line); color: var(--paper);
+}
+.head-btn:hover { background: rgba(255, 255, 255, 0.14); filter: none; transform: none; }
+.head-btn.active { background: linear-gradient(135deg, rgba(43, 107, 255, 0.5), rgba(255, 77, 141, 0.35)); }
+.presence { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%; background: #4b4a6e; }
+.presence.on { background: var(--green); box-shadow: 0 0 0 3px rgba(53, 224, 138, 0.2); }
+.buffer.friend { gap: 8px; }
+.buffer-name.offline { color: var(--faint); }
+.friend-requests { display: flex; flex-direction: column; gap: 6px; }
+.friend-req {
+  display: flex; flex-direction: column; gap: 6px; padding: 9px 11px; font-size: 0.85rem; color: var(--dim);
+  border-radius: var(--r); background: rgba(255, 201, 60, 0.1); border: 1px solid rgba(255, 201, 60, 0.35);
+}
+.friend-req b { color: var(--paper); }
+.friend-req-btns { display: flex; gap: 6px; }
+
+/* --- Messages: replies, pictures, reactions ------------------------------------ */
+.chat { position: relative; }
+.chat.dragging { outline: 2px dashed var(--cyan); outline-offset: -8px; }
+.drop-hint {
+  position: absolute; inset: 0; z-index: 5; display: flex; align-items: center; justify-content: center;
+  font-size: 1.2rem; font-weight: 700; background: rgba(10, 10, 31, 0.78); pointer-events: none;
+}
+.reply-quote {
+  display: flex; flex-direction: column; gap: 1px; margin: -2px 0 6px; padding: 4px 10px; font-size: 0.8rem;
+  border-left: 3px solid var(--gold); border-radius: 6px; background: rgba(0, 0, 0, 0.22);
+  max-width: 44ch; overflow: hidden;
+}
+.reply-quote b { color: var(--gold); font-size: 0.76rem; }
+.reply-quote span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.85; }
+.reply-quote.gone span { font-style: italic; opacity: 0.6; }
+.msg .text.has-image { padding: 6px; }
+.msg-image-link { display: block; line-height: 0; }
+.msg-image { max-width: min(340px, 100%); max-height: 300px; border-radius: 12px; display: block; background: rgba(0, 0, 0, 0.25); }
+.msg .text.has-image .msg-text, .msg .text.has-image .reply-quote { margin: 6px 6px 2px; }
+.rx-row { display: flex; flex-wrap: wrap; gap: 5px; margin: 4px 2px 0; }
+.msg.self .rx-row { justify-content: flex-end; }
+.rx {
+  display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; font-size: 0.85rem; border-radius: 999px;
+  background: var(--glass-2); border: 1px solid var(--line); color: var(--dim);
+}
+.rx:hover:not(:disabled) { background: rgba(255, 255, 255, 0.14); filter: none; transform: none; }
+.rx.mine { background: rgba(43, 107, 255, 0.3); border-color: rgba(25, 211, 255, 0.7); color: #fff; }
+.rx-n { font-size: 0.74rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.rx-wrap { position: relative; display: inline-flex; }
+.rx-picker {
+  position: absolute; bottom: calc(100% + 4px); right: 0; z-index: 10; display: flex; gap: 2px; padding: 5px;
+  border-radius: 14px; background: #171433; border: 1px solid var(--line); box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+}
+.msg.self .rx-picker { right: auto; left: 0; }
+.rx-picker button { padding: 3px 6px; font-size: 1.1rem; background: transparent; border: 0; }
+.rx-picker button:hover { background: rgba(255, 255, 255, 0.14); }
+
+/* --- Composer extras ------------------------------------------------------------ */
+.attach-btn { padding: 8px 12px; border-radius: 999px; background: var(--glass-2); border: 1px solid var(--line); }
+.attach-btn:hover { background: rgba(255, 255, 255, 0.14); filter: none; transform: none; }
+.reply-bar, .upload-error {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 14px 6px;
+  padding: 7px 12px; font-size: 0.82rem; border-radius: 12px;
+}
+.reply-bar { background: rgba(255, 201, 60, 0.12); border: 1px solid rgba(255, 201, 60, 0.4); color: var(--dim); }
+.reply-bar span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reply-bar b { color: var(--paper); }
+.upload-error { background: rgba(255, 77, 109, 0.15); border: 1px solid rgba(255, 77, 109, 0.5); color: #ffb3c0; }
+.reply-bar button, .upload-error button { padding: 0 6px; background: transparent; color: inherit; border: 0; }
+.reply-bar button:hover, .upload-error button:hover { filter: none; transform: none; color: #fff; }
+
+/* --- Search ----------------------------------------------------------------------- */
+.search-panel { border-bottom: 1px solid var(--line-soft); padding: 10px 18px; background: rgba(0, 0, 0, 0.15); }
+.search-form { display: flex; gap: 8px; }
+.search-form input { flex: 1; min-width: 0; border-radius: 999px; }
+.search-results { max-height: 260px; overflow-y: auto; margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.search-count { margin: 0; font-size: 0.78rem; color: var(--faint); }
+.sr-row { padding: 8px 12px; border-radius: 12px; background: var(--glass); border: 1px solid var(--line-soft); }
+.sr-head { display: flex; align-items: baseline; gap: 10px; font-size: 0.85rem; }
+.sr-time { color: var(--faint); font-size: 0.72rem; }
+.sr-text { margin-top: 2px; font-size: 0.9rem; overflow-wrap: anywhere; }
+.sr-text mark { background: rgba(255, 201, 60, 0.45); color: #fff; border-radius: 3px; padding: 0 2px; }
+
+/* --- Room settings, reports, moderator tools ---------------------------------- */
+.rs-modal { width: min(460px, 94vw); max-height: 86vh; overflow-y: auto; }
+.rs-section { margin-top: 16px; }
+.rs-title { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--faint); margin-bottom: 6px; }
+.rs-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 12px; margin-bottom: 4px; border-radius: 12px; background: var(--glass); border: 1px solid var(--line-soft); }
+.rs-row-plain { margin: 0; color: var(--dim); }
+.rs-sub { margin-left: 6px; font-size: 0.78rem; color: var(--faint); }
+.report-preview { margin: 0 0 14px; padding: 8px 12px; border-left: 3px solid var(--pink); border-radius: 6px; background: rgba(0, 0, 0, 0.22); color: var(--dim); overflow-wrap: anywhere; }
+.optional { font-weight: 400; color: var(--faint); }
+.pm-mod { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+.pm-mod-title { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: var(--faint); margin-bottom: 8px; }
+.pm-mod-row { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* --- Admin: reports ----------------------------------------------------------------- */
+.seg { display: inline-flex; gap: 4px; padding: 4px; margin-bottom: 16px; border-radius: 999px; background: var(--glass); border: 1px solid var(--line-soft); }
+.seg button { padding: 6px 18px; border-radius: 999px; background: transparent; color: var(--dim); }
+.seg button:hover { filter: none; transform: none; color: var(--paper); }
+.seg button.active { background: linear-gradient(135deg, var(--blue), var(--purple)); color: #fff; }
+.report-card { border-left: 5px solid #ff6b6b; }
+.report-card.resolved { border-left-color: var(--green); opacity: 0.8; }
+.report-meta { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.report-when { color: var(--faint); font-size: 0.82rem; }
+.report-quote { margin: 0 0 10px; padding: 10px 14px; border-radius: 12px; background: rgba(0, 0, 0, 0.25); overflow-wrap: anywhere; }
+.report-image { display: block; margin-top: 8px; max-width: 280px; max-height: 220px; border-radius: 10px; }
+.report-reason { color: var(--dim); font-size: 0.9rem; margin-bottom: 12px; }
+.report-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.report-done { color: var(--faint); font-size: 0.85rem; }

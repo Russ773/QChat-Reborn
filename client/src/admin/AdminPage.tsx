@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { AdminRoom, AdminStats, AdminUser, AuditEntry, SiteSettings } from '@qchat/shared';
+import type { AdminReport, AdminRoom, AdminStats, AdminUser, AuditEntry, SiteSettings } from '@qchat/shared';
 import { Avatar } from '../components/Avatar.js';
 import { LogoMark, Wordmark } from '../components/Logo.js';
 import { adminApi } from './adminApi.js';
 
-type Tab = 'dashboard' | 'members' | 'rooms' | 'announce' | 'settings' | 'audit';
+type Tab = 'dashboard' | 'members' | 'rooms' | 'reports' | 'announce' | 'settings' | 'audit';
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: '📊' },
   { id: 'members', label: 'Members', icon: '👥' },
   { id: 'rooms', label: 'Rooms', icon: '💬' },
+  { id: 'reports', label: 'Reports', icon: '🚩' },
   { id: 'announce', label: 'Announcements', icon: '📢' },
   { id: 'settings', label: 'Site settings', icon: '⚙️' },
   { id: 'audit', label: 'Audit log', icon: '🧾' },
@@ -43,6 +44,7 @@ const ACTION_LABEL: Record<string, string> = {
   'close-room': 'Closed a room',
   'stop-video': 'Stopped a video',
   'kick-from-room': 'Removed someone from a room',
+  'resolve-report': 'Dealt with a report',
 };
 
 /** Load data once, and again whenever reload() is called. */
@@ -165,6 +167,12 @@ function Dashboard({ token }: TabProps) {
         { label: 'Rooms', value: s.rooms, sub: 'open right now', tone: 'pink' },
         { label: 'Videos playing', value: s.videos, sub: 'across all rooms', tone: 'purple' },
         { label: 'Suspended', value: s.suspended, sub: 'members', tone: 'red' },
+        {
+          label: 'Open reports',
+          value: s.openReports,
+          sub: 'waiting for review',
+          tone: s.openReports > 0 ? 'red' : 'green',
+        },
       ]
     : [];
 
@@ -658,6 +666,83 @@ function Switch({
   );
 }
 
+// --- Reports -----------------------------------------------------------------------------------
+
+function Reports({ token, notify, ask }: TabProps) {
+  const [filter, setFilter] = useState<'open' | 'all'>('open');
+  const reports = useLoad<AdminReport[]>(() => adminApi.reports(token, filter), [token, filter]);
+
+  const resolve = (r: AdminReport, action: 'delete' | 'dismiss' | 'handled') => {
+    const go = async () => {
+      await adminApi.resolveReport(token, r.id, action);
+      notify(action === 'delete' ? 'Message deleted and report closed.' : 'Report closed.');
+      reports.reload();
+    };
+    if (action === 'delete') {
+      ask({
+        title: 'Delete this message?',
+        message: `It will be removed from ${roomLabel(r.room)} for everyone, and every report about it is closed.`,
+        confirmLabel: 'Delete message',
+        danger: true,
+        run: go,
+      });
+    } else {
+      go().catch((e: Error) => notify(e.message));
+    }
+  };
+
+  return (
+    <>
+      <PageHead title="Reports" sub="Messages members have flagged for review." />
+      <div className="seg">
+        <button className={filter === 'open' ? 'active' : ''} onClick={() => setFilter('open')}>Open</button>
+        <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>All</button>
+      </div>
+      {reports.error && <p className="pm-error">{reports.error}</p>}
+      {!reports.data && <p className="muted">Loading…</p>}
+      {reports.data?.length === 0 && (
+        <div className="panel">
+          <p className="muted">{filter === 'open' ? 'No open reports. All clear.' : 'Nobody has reported anything yet.'}</p>
+        </div>
+      )}
+      {reports.data?.map((r) => (
+        <div className={`panel report-card ${r.status}`} key={r.id}>
+          <div className="report-meta">
+            <span>
+              <b>{r.author}</b> in <b>{roomLabel(r.room)}</b>
+            </span>
+            <span className="report-when">{fmtTime(r.ts)}</span>
+          </div>
+          <blockquote className="report-quote">
+            {r.text || <i>(no text)</i>}
+            {r.image && (
+              <a href={r.image} target="_blank" rel="noreferrer noopener">
+                <img className="report-image" src={r.image} alt="Reported picture" loading="lazy" />
+              </a>
+            )}
+          </blockquote>
+          <div className="report-reason">
+            Reported by <b>{r.reporter}</b>
+            {r.reason ? <>: {r.reason}</> : ' (no reason given)'}
+          </div>
+          {r.status === 'open' ? (
+            <div className="report-actions">
+              <button className="mini danger" onClick={() => resolve(r, 'delete')}>Delete message</button>
+              <button className="mini" onClick={() => resolve(r, 'handled')}>Mark handled</button>
+              <button className="mini" onClick={() => resolve(r, 'dismiss')}>Dismiss</button>
+            </div>
+          ) : (
+            <div className="report-done">
+              Closed ({r.resolution}) by {r.resolvedBy}
+              {r.resolvedAt ? `, ${fmtTime(r.resolvedAt)}` : ''}
+            </div>
+          )}
+        </div>
+      ))}
+    </>
+  );
+}
+
 // --- Audit log ------------------------------------------------------------------------------
 
 function Audit({ token }: TabProps) {
@@ -733,6 +818,7 @@ export function AdminPage({ token, me, onBack }: { token: string; me: string; on
         {tab === 'dashboard' && <Dashboard {...props} />}
         {tab === 'members' && <Members {...props} />}
         {tab === 'rooms' && <Rooms {...props} />}
+        {tab === 'reports' && <Reports {...props} />}
         {tab === 'announce' && <Announce {...props} />}
         {tab === 'settings' && <Settings {...props} />}
         {tab === 'audit' && <Audit {...props} />}

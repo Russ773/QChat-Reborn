@@ -1,4 +1,4 @@
-import type { DmThread, MediaState, RoomInfo, RoomRole, RoomTopic } from '@qchat/shared';
+import type { DmThread, FriendInfo, MediaState, ReplyRef, RoomInfo, RoomRole, RoomTopic } from '@qchat/shared';
 import type { ChatStatus } from './chat/client.js';
 
 export type ChatEventKind =
@@ -26,6 +26,27 @@ export interface ChatEvent {
   edited?: number;
   /** True when the message mentions the local user. */
   mention?: boolean;
+  /** The message this one answers. */
+  replyTo?: ReplyRef;
+  /** The path of a shared picture. */
+  image?: string;
+  /** Emoji reactions: emoji -> who reacted. */
+  reactions?: Record<string, string[]>;
+}
+
+/** The result of searching a room. */
+export interface SearchState {
+  q: string;
+  events: ChatEvent[];
+}
+
+/** What the room settings panel shows (for moderators). */
+export interface RoomAdminInfo {
+  room: string;
+  owner: string | null;
+  bans: string[];
+  mods: string[];
+  mutes: { name: string; until: number | null }[];
 }
 
 export interface RoomState {
@@ -46,6 +67,8 @@ export interface RoomState {
   loadingMore: boolean;
   /** Who is typing, with the time each indicator expires. */
   typing: Record<string, number>;
+  /** The latest search in this room, if any. */
+  search: SearchState | null;
 }
 
 /** A private conversation. */
@@ -88,5 +111,10 @@ export interface AppState {
   /** The most recent sound to play (bumped id so effects re-fire). */
   lastSound: { id: number; room: string; sound: string; from: string } | null;
   /** Something that should get your attention (a mention or a new private message). */
-  alert: { id: number; kind: 'mention' | 'dm'; from: string } | null;
+  alert: { id: number; kind: 'mention' | 'dm'; from: string; text: string } | null;
+  /** Your friends (online first) and pending requests. */
+  friends: FriendInfo[];
+  requests: { incoming: string[]; outgoing: string[] };
+  /** Room settings for the panel moderators can open. */
+  roomAdmin: RoomAdminInfo | null;
 }

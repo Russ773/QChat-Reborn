@@ -46,8 +46,29 @@ export class ChatClient {
   leave(room: string): void {
     this.send({ t: 'leave', room });
   }
-  say(room: string, text: string): void {
-    this.send({ t: 'say', room, text });
+  say(room: string, text: string, extra: { replyTo?: string; image?: string } = {}): void {
+    this.send({ t: 'say', room, text, ...extra });
+  }
+  react(room: string, id: string, emoji: string): void {
+    this.send({ t: 'react', room, id, emoji });
+  }
+  report(room: string, id: string, reason?: string): void {
+    this.send({ t: 'report', room, id, reason });
+  }
+  search(room: string, q: string): void {
+    this.send({ t: 'search', room, q });
+  }
+  roomAdmin(room: string): void {
+    this.send({ t: 'roomAdmin', room });
+  }
+  friendRequest(to: string): void {
+    this.send({ t: 'friendRequest', to });
+  }
+  friendRespond(from: string, accept: boolean): void {
+    this.send({ t: 'friendRespond', from, accept });
+  }
+  friendRemove(who: string): void {
+    this.send({ t: 'friendRemove', who });
   }
   nick(nick: string): void {
     this.send({ t: 'nick', nick });

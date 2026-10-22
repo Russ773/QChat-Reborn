@@ -35,20 +35,30 @@ export function readBody(req: IncomingMessage): Promise<Record<string, unknown>>
   });
 }
 
+/**
+ * Read a raw request body. Returns null if it is bigger than `maxBytes`. The
+ * excess is read and thrown away (up to a hard cap) so the caller can still send
+ * a proper "too big" reply instead of the connection just dropping.
+ */
 export function readRawBody(req: IncomingMessage, maxBytes: number): Promise<Buffer | null> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     let size = 0;
+    let over = false;
     req.on('data', (c: Buffer) => {
       size += c.length;
       if (size > maxBytes) {
-        req.destroy();
-        resolve(null);
+        over = true;
+        chunks.length = 0;
+        if (size > maxBytes * 8) {
+          req.destroy(); // someone is just flooding us
+          resolve(null);
+        }
         return;
       }
       chunks.push(c);
     });
-    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('end', () => resolve(over ? null : Buffer.concat(chunks)));
     req.on('error', () => resolve(null));
   });
 }

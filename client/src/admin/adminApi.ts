@@ -1,4 +1,4 @@
-import type { AdminRoom, AdminStats, AdminUser, AuditEntry, SiteSettings } from '@qchat/shared';
+import type { AdminReport, AdminRoom, AdminStats, AdminUser, AuditEntry, SiteSettings } from '@qchat/shared';
 import { authHeaders, jreq, jsonAuth } from '../api.js';
 
 const get = (token: string, path: string) => jreq(`/api/admin/${path}`, { headers: authHeaders(token) });
@@ -10,6 +10,11 @@ const enc = encodeURIComponent;
 export const adminApi = {
   stats: (t: string): Promise<AdminStats> => get(t, 'stats').then((d) => d.stats),
   audit: (t: string): Promise<AuditEntry[]> => get(t, 'audit').then((d) => d.entries),
+
+  reports: (t: string, status: 'open' | 'all'): Promise<AdminReport[]> =>
+    get(t, `reports?status=${status}`).then((d) => d.reports),
+  resolveReport: (t: string, id: number, action: 'delete' | 'dismiss' | 'handled') =>
+    post(t, `reports/${id}/resolve`, { action }),
 
   users: (t: string, q: string): Promise<AdminUser[]> => get(t, `users?q=${enc(q)}&limit=200`).then((d) => d.users),
   setRole: (t: string, account: string, role: 'admin' | 'user') => post(t, `users/${enc(account)}/role`, { role }),

@@ -25,6 +25,30 @@ export interface ChatLine {
   kind?: 'action';
   /** When it was last edited, if ever. */
   edited?: number;
+  /** The message this one answers. */
+  replyTo?: ReplyRef;
+  /** A picture shared with the message: the path of an uploaded image. */
+  image?: string;
+  /** Emoji reactions: emoji -> who reacted. */
+  reactions?: Record<string, string[]>;
+}
+
+/** A short snapshot of the message being replied to. */
+export interface ReplyRef {
+  id: string;
+  from: string;
+  /** The start of the original text (empty if it was deleted). */
+  text: string;
+  deleted?: boolean;
+}
+
+/** The reactions people can add to a message. */
+export const REACTION_EMOJI = ['👍', '❤️', '😂', '😮', '😢', '🎉', '🔥', '👀'] as const;
+
+/** One entry in a friends list. */
+export interface FriendInfo {
+  name: string;
+  online: boolean;
 }
 
 /** A person's standing in a room, from most to least powerful. */
@@ -84,7 +108,16 @@ export type ClientMsg =
   /** `restore` rejoins a remembered room quietly: never creates it, and says nothing if it is gone or you are banned. */
   | { t: 'join'; room: string; restore?: boolean }
   | { t: 'leave'; room: string }
-  | { t: 'say'; room: string; text: string }
+  /** `replyTo` is a message id; `image` is the name of a file you uploaded. */
+  | { t: 'say'; room: string; text: string; replyTo?: string; image?: string }
+  | { t: 'react'; room: string; id: string; emoji: string }
+  | { t: 'report'; room: string; id: string; reason?: string }
+  | { t: 'search'; room: string; q: string }
+  | { t: 'roomAdmin'; room: string }
+  | { t: 'friendRequest'; to: string }
+  | { t: 'friendRespond'; from: string; accept: boolean }
+  | { t: 'friendRemove'; who: string }
+  | { t: 'listFriends' }
   | { t: 'nick'; nick: string }
   | { t: 'history'; room: string; before: number }
   | { t: 'typing'; room: string }
@@ -123,6 +156,19 @@ export type ServerMsg =
   | { t: 'typing'; room: string; nick: string }
   | { t: 'edited'; room: string; id: string; text: string; edited: number }
   | { t: 'deleted'; room: string; id: string }
+  | { t: 'reactions'; room: string; id: string; reactions: Record<string, string[]> }
+  | { t: 'searchResults'; room: string; q: string; lines: ChatLine[] }
+  | {
+      t: 'roomAdmin';
+      room: string;
+      owner: string | null;
+      bans: string[];
+      mods: string[];
+      mutes: { name: string; until: number | null }[];
+    }
+  | { t: 'friends'; friends: FriendInfo[]; incoming: string[]; outgoing: string[] }
+  /** A friendly confirmation (shown as a toast), as opposed to an error. */
+  | { t: 'info'; text: string }
   | { t: 'joinNotice'; room: string; nick: string }
   | { t: 'leaveNotice'; room: string; nick: string; reason?: string }
   | { t: 'dm'; msg: Dm }

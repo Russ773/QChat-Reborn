@@ -1,6 +1,13 @@
 import { useEffect, useState } from 'react';
 import { VISIBILITY_FIELDS, defaultPrefs, fieldVisible, type ProfilePrefs } from '@qchat/shared';
 import { me, savePreferences } from '../api.js';
+import {
+  disableNotifications,
+  enableNotifications,
+  notificationsEnabled,
+  notificationsSupported,
+  notificationsWanted,
+} from '../notify.js';
 
 interface Props {
   token: string;
@@ -12,6 +19,22 @@ export function PreferencesModal({ token, onClose, onSaved }: Props) {
   const [prefs, setPrefs] = useState<ProfilePrefs | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [desktop, setDesktop] = useState(notificationsWanted() && notificationsEnabled());
+  const [desktopNote, setDesktopNote] = useState<string | null>(null);
+
+  // This one is about this browser, so it applies straight away rather than on Save.
+  const toggleDesktop = async (on: boolean) => {
+    setDesktopNote(null);
+    if (!on) {
+      disableNotifications();
+      setDesktop(false);
+      return;
+    }
+    const r = await enableNotifications();
+    setDesktop(r === 'granted');
+    if (r === 'unsupported') setDesktopNote('This browser does not support desktop notifications.');
+    else if (r === 'denied') setDesktopNote('Your browser blocked notifications. Allow them for this site in the browser settings, then try again.');
+  };
 
   useEffect(() => {
     me(token)
@@ -80,6 +103,21 @@ export function PreferencesModal({ token, onClose, onSaved }: Props) {
                 messaging and media sync are on the way; these settings are ready for them.
               </p>
             </div>
+
+            {notificationsSupported() && (
+              <div className="pref-group">
+                <div className="pref-legend">Notifications</div>
+                <label className="toggle">
+                  <input type="checkbox" checked={desktop} onChange={(e) => void toggleDesktop(e.target.checked)} />
+                  <span>Desktop notifications</span>
+                </label>
+                <p className="pref-note">
+                  Get a pop-up when someone mentions you or sends you a private message while QChat is in the
+                  background. This applies to this browser only.
+                </p>
+                {desktopNote && <p className="pm-error">{desktopNote}</p>}
+              </div>
+            )}
 
             {error && <p className="pm-error">{error}</p>}
             <div className="pm-actions">

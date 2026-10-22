@@ -13,6 +13,15 @@ interface Props {
   onMessage?: () => void;
   /** False when they have turned private messages off. */
   canMessage?: boolean;
+  /** Friend buttons for someone else's profile. */
+  friend?: {
+    status: 'none' | 'friends' | 'sent' | 'incoming';
+    onAdd: () => void;
+    onRemove: () => void;
+    onAccept: () => void;
+  };
+  /** Room moderation buttons (shown to moderators looking at someone they can act on). */
+  modTools?: { label: string; danger?: boolean; run: () => void }[];
 }
 
 const FACTS: (keyof Profile)[] = [
@@ -29,7 +38,18 @@ function initForm(p: Profile | null): Record<string, string> {
   return form;
 }
 
-export function ProfileModal({ account, profile, editable, onClose, onSave, onUploadAvatar, onMessage, canMessage = true }: Props) {
+export function ProfileModal({
+  account,
+  profile,
+  editable,
+  onClose,
+  onSave,
+  onUploadAvatar,
+  onMessage,
+  canMessage = true,
+  friend,
+  modTools,
+}: Props) {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<Record<string, string>>(() => initForm(profile));
   const [accent, setAccent] = useState(profile?.accent || '#7c8cff');
@@ -157,10 +177,26 @@ export function ProfileModal({ account, profile, editable, onClose, onSave, onUp
                 <button onClick={() => setEditing(true)}>Edit profile</button>
               </div>
             )}
-            {!editable && onMessage && (
+            {!editable && (onMessage || friend) && (
               <div className="pm-actions pm-message">
-                {!canMessage && <span className="pm-note">Not accepting private messages</span>}
-                <button disabled={!canMessage} onClick={onMessage}>Send message</button>
+                {onMessage && !canMessage && <span className="pm-note">Not accepting private messages</span>}
+                {friend?.status === 'none' && <button className="secondary" onClick={friend.onAdd}>Add friend</button>}
+                {friend?.status === 'sent' && <button className="secondary" onClick={friend.onRemove}>Request sent (cancel)</button>}
+                {friend?.status === 'incoming' && <button onClick={friend.onAccept}>Accept friend request</button>}
+                {friend?.status === 'friends' && <button className="secondary" onClick={friend.onRemove}>Friends ✓ (remove)</button>}
+                {onMessage && <button disabled={!canMessage} onClick={onMessage}>Send message</button>}
+              </div>
+            )}
+            {!editable && modTools && modTools.length > 0 && (
+              <div className="pm-mod">
+                <div className="pm-mod-title">Moderator tools</div>
+                <div className="pm-mod-row">
+                  {modTools.map((t) => (
+                    <button key={t.label} className={`mini ${t.danger ? 'danger' : ''}`} onClick={t.run}>
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </div>

@@ -85,6 +85,15 @@ export function uploadAvatar(token: string, file: File): Promise<string> {
   }).then((d) => d.avatar);
 }
 
+/** Upload a picture to share in a room. Returns the stored file name. */
+export function uploadImage(token: string, file: Blob): Promise<{ name: string; url: string }> {
+  return jreq('/api/upload', {
+    method: 'POST',
+    headers: { 'content-type': file.type || 'application/octet-stream', ...authHeaders(token) },
+    body: file,
+  });
+}
+
 export function logout(token: string): void {
   fetch('/api/logout', { method: 'POST', headers: authHeaders(token) }).catch(() => {});
 }

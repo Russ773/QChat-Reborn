@@ -5,6 +5,7 @@ import {
   HISTORY_PAGE,
   MAX_MESSAGE,
   MAX_TOPIC,
+  REACTION_EMOJI,
   decodeMsg,
   encodeMsg,
   normalizeRoom,
@@ -13,11 +14,13 @@ import {
   type AdminRoom,
   type ChatLine,
   type ClientMsg,
+  type FriendInfo,
   type MediaState,
   type RoomInfo,
   type RoomRole,
   type ServerMsg,
 } from '@qchat/shared';
+import { UPLOAD_NAME_RE } from '../uploads.js';
 import * as store from './store.js';
 
 interface Conn {
@@ -151,7 +154,23 @@ export class ChatServer {
       case 'leave':
         return this.onLeave(conn, msg.room, 'left');
       case 'say':
-        return this.onSay(conn, msg.room, String(msg.text ?? ''));
+        return this.onSay(conn, msg.room, String(msg.text ?? ''), msg.replyTo, msg.image);
+      case 'react':
+        return this.onReact(conn, msg.room, String(msg.id ?? ''), String(msg.emoji ?? ''));
+      case 'report':
+        return this.onReport(conn, msg.room, String(msg.id ?? ''), msg.reason);
+      case 'search':
+        return this.onSearch(conn, msg.room, String(msg.q ?? ''));
+      case 'roomAdmin':
+        return this.onRoomAdmin(conn, msg.room);
+      case 'friendRequest':
+        return this.onFriendRequest(conn, String(msg.to ?? ''));
+      case 'friendRespond':
+        return this.onFriendRespond(conn, String(msg.from ?? ''), msg.accept === true);
+      case 'friendRemove':
+        return this.onFriendRemove(conn, String(msg.who ?? ''));
+      case 'listFriends':
+        return this.send(conn, { t: 'friends', ...this.friendList(conn.account!) });
       case 'nick':
         return this.send(conn, { t: 'error', text: 'Your chat name is your account name.' });
       case 'history':
@@ -197,6 +216,8 @@ export class ChatServer {
     conn.nick = account;
     this.send(conn, { t: 'welcome', you: { id: conn.id, nick: conn.nick, account } });
     this.sendThreads(account, conn);
+    this.send(conn, { t: 'friends', ...this.friendList(account) });
+    if (this.connsOf(account).length === 1) this.pushToFriends(account); // just came online
   }
 
   // --- Rooms ------------------------------------------------------------------
@@ -277,6 +298,7 @@ export class ChatServer {
       this.broadcast(room, { t: 'leaveNotice', room, nick: conn.nick, reason: 'disconnected' });
       this.broadcastPresence(room);
     }
+    if (conn.account && this.connsOf(conn.account).length === 0) this.pushToFriends(conn.account); // went offline
   }
 
   private inRoom(conn: Conn, room: string): boolean {
@@ -285,20 +307,47 @@ export class ChatServer {
 
   // --- Messages ---------------------------------------------------------------
 
-  private onSay(conn: Conn, roomName: string, text: string): void {
+  private onSay(conn: Conn, roomName: string, text: string, replyTo?: string, image?: string): void {
     const room = normalizeRoom(roomName);
     if (!this.inRoom(conn, room)) return this.send(conn, { t: 'error', text: 'You are not in that room.' });
+    const extra = {
+      replyTo: typeof replyTo === 'string' && replyTo ? replyTo : undefined,
+      image: typeof image === 'string' && image ? image : undefined,
+    };
     // "/something" is a command; "//something" is a message that starts with a slash.
-    if (text.startsWith('/') && !text.startsWith('//')) return this.runCommand(conn, room, text);
-    this.postMessage(conn, room, text.startsWith('//') ? text.slice(1) : text, undefined);
+    // (A picture's caption is always plain text.)
+    if (!extra.image && !extra.replyTo && text.startsWith('/') && !text.startsWith('//')) {
+      return this.runCommand(conn, room, text);
+    }
+    this.postMessage(conn, room, text.startsWith('//') ? text.slice(1) : text, undefined, extra);
   }
 
-  private postMessage(conn: Conn, room: string, text: string, kind: 'action' | undefined): void {
+  private postMessage(
+    conn: Conn,
+    room: string,
+    text: string,
+    kind: 'action' | undefined,
+    extra: { replyTo?: string; image?: string } = {},
+  ): void {
     if (this.isMuted(conn, room)) return;
+    if (extra.image) {
+      // Only a picture you uploaded yourself can be attached.
+      const mine = UPLOAD_NAME_RE.test(extra.image) && store.uploadOwner(extra.image) === conn.account!.toLowerCase();
+      if (!mine) return this.send(conn, { t: 'error', text: 'That picture could not be found. Try uploading it again.' });
+    }
+    if (extra.replyTo) {
+      const orig = store.getMessage(room, extra.replyTo);
+      if (!orig || orig.deleted) {
+        return this.send(conn, { t: 'error', text: 'The message you are replying to no longer exists.' });
+      }
+    }
     if (this.tooFast(conn)) return;
     const clean = sanitize(text);
-    if (!clean) return;
-    const line = store.addMessage(room, conn.nick, kind, clean);
+    if (!clean && !extra.image) return;
+    const line = store.addMessage(room, conn.nick, kind, clean, {
+      replyTo: extra.replyTo,
+      image: extra.image ? `/uploads/${extra.image}` : undefined,
+    });
     store.touchRoom(room);
     const sender = conn.nick.toLowerCase();
     for (const id of this.live.get(room) ?? []) {
@@ -335,7 +384,7 @@ export class ChatServer {
     }
     if (this.isMuted(conn, room) || this.tooFast(conn)) return;
     const clean = sanitize(text);
-    if (!clean) return;
+    if (!clean && !msg.image) return; // a picture can have its caption removed; text cannot be emptied
     const edited = store.editMessage(id, clean);
     this.broadcast(room, { t: 'edited', room, id, text: clean, edited });
   }
@@ -354,6 +403,159 @@ export class ChatServer {
   }
 
   // --- Private messages ---------------------------------------------------------
+
+  // --- Reactions, reports, search, room settings -----------------------------------
+
+  private onReact(conn: Conn, roomName: string, id: string, emoji: string): void {
+    const room = normalizeRoom(roomName);
+    if (!this.inRoom(conn, room)) return;
+    if (!(REACTION_EMOJI as readonly string[]).includes(emoji)) {
+      return this.send(conn, { t: 'error', text: 'That reaction is not available.' });
+    }
+    const msg = store.getMessage(room, id);
+    if (!msg || msg.deleted) return this.send(conn, { t: 'error', text: 'That message no longer exists.' });
+    if (this.isMuted(conn, room) || this.tooFast(conn)) return;
+    // A message can carry at most 12 different reactions.
+    const current = store.reactionsFor([id]).get(id) ?? {};
+    if (!(emoji in current) && Object.keys(current).length >= 12) {
+      return this.send(conn, { t: 'error', text: 'That message already has as many different reactions as it can hold.' });
+    }
+    const reactions = store.toggleReaction(id, conn.account!, emoji);
+    this.broadcast(room, { t: 'reactions', room, id, reactions });
+  }
+
+  private onReport(conn: Conn, roomName: string, id: string, reason?: string): void {
+    const room = normalizeRoom(roomName);
+    if (!this.inRoom(conn, room)) return;
+    const msg = store.getMessage(room, id);
+    if (!msg || msg.deleted) return this.send(conn, { t: 'error', text: 'That message no longer exists.' });
+    if (msg.fromLower === conn.account!.toLowerCase()) {
+      return this.send(conn, { t: 'error', text: 'You cannot report your own message.' });
+    }
+    if (this.tooFast(conn)) return;
+    const why = sanitize(String(reason ?? '')).slice(0, 200) || null;
+    if (!store.addReport(conn.account!, msg, why)) {
+      return this.send(conn, { t: 'error', text: 'You have already reported that message.' });
+    }
+    this.send(conn, { t: 'info', text: 'Thanks. An admin will take a look.' });
+    this.notifyAdmins(`New report: ${conn.nick} reported a message by ${msg.fromName} in ${label(room)}.`);
+  }
+
+  private onSearch(conn: Conn, roomName: string, q: string): void {
+    const room = normalizeRoom(roomName);
+    if (!this.inRoom(conn, room)) return;
+    const query = sanitize(q).slice(0, 100);
+    if (query.length < 2) return this.send(conn, { t: 'error', text: 'Type at least 2 characters to search.' });
+    if (this.tooFast(conn)) return;
+    const lines = this.unblocked(store.searchMessages(room, query, 50), conn.account!);
+    this.send(conn, { t: 'searchResults', room, q: query, lines });
+  }
+
+  /** The room's moderator list, bans and mutes, for the room settings panel. */
+  private onRoomAdmin(conn: Conn, roomName: string): void {
+    const room = normalizeRoom(roomName);
+    if (!this.inRoom(conn, room)) return;
+    if (this.rank(room, conn.account!) < 2) {
+      return this.send(conn, { t: 'error', text: 'Only moderators can see the room settings.' });
+    }
+    const proper = (lower: string) => this.policy.lookup(lower)?.account ?? lower;
+    this.send(conn, {
+      t: 'roomAdmin',
+      room,
+      owner: store.getRoom(room)?.owner ?? null,
+      bans: store.listBans(room),
+      mods: store.listMods(room).map(proper),
+      mutes: store.listMutes(room).map((m) => ({ name: proper(m.accountLower), until: m.until })),
+    });
+  }
+
+  // --- Friends ----------------------------------------------------------------------
+
+  private friendList(account: string): { friends: FriendInfo[]; incoming: string[]; outgoing: string[] } {
+    const l = account.toLowerCase();
+    const friends = store
+      .friendsOf(l)
+      .map((fl) => {
+        const name = this.policy.lookup(fl)?.account ?? fl;
+        return { name, online: this.connsOf(name).length > 0 };
+      })
+      .sort((a, b) => Number(b.online) - Number(a.online) || a.name.localeCompare(b.name));
+    return { friends, incoming: store.incomingRequests(l), outgoing: store.outgoingRequests(l) };
+  }
+
+  private sendFriends(account: string): void {
+    const msg: ServerMsg = { t: 'friends', ...this.friendList(account) };
+    for (const c of this.connsOf(account)) this.send(c, msg);
+  }
+
+  /** Tell everyone who has this person as a friend that they came online or went offline. */
+  private pushToFriends(account: string): void {
+    for (const fl of store.friendsOf(account.toLowerCase())) {
+      const name = this.policy.lookup(fl)?.account;
+      if (name) this.sendFriends(name);
+    }
+  }
+
+  private tellAccount(account: string, text: string): void {
+    for (const c of this.connsOf(account)) this.send(c, { t: 'info', text });
+  }
+
+  private onFriendRequest(conn: Conn, toRaw: string): void {
+    const me = conn.account!;
+    const target = this.policy.lookup(toRaw.trim());
+    if (!target) return this.send(conn, { t: 'error', text: `There is no member called "${toRaw.trim()}".` });
+    const ml = me.toLowerCase();
+    const tl = target.account.toLowerCase();
+    if (ml === tl) return this.send(conn, { t: 'error', text: 'You cannot add yourself as a friend.' });
+    if (this.blocksFor(ml).has(tl) || this.blocksFor(tl).has(ml)) {
+      return this.send(conn, { t: 'error', text: `You cannot send ${target.account} a friend request.` });
+    }
+    if (store.areFriends(ml, tl)) return this.send(conn, { t: 'error', text: `You are already friends with ${target.account}.` });
+    if (store.hasRequest(ml, tl)) return this.send(conn, { t: 'error', text: 'You have already sent them a request.' });
+    if (this.tooFast(conn)) return;
+
+    if (store.hasRequest(tl, ml)) {
+      // They had already asked you: this makes you friends.
+      store.removeRequest(tl, ml);
+      store.addFriendship(ml, tl);
+      this.tellAccount(me, `You and ${target.account} are now friends.`);
+      this.tellAccount(target.account, `You and ${me} are now friends.`);
+    } else {
+      store.addRequest(me, target.account);
+      this.tellAccount(me, `Friend request sent to ${target.account}.`);
+      this.tellAccount(target.account, `${me} sent you a friend request.`);
+    }
+    this.sendFriends(me);
+    this.sendFriends(target.account);
+  }
+
+  private onFriendRespond(conn: Conn, fromRaw: string, accept: boolean): void {
+    const me = conn.account!;
+    const from = this.policy.lookup(fromRaw.trim());
+    const ml = me.toLowerCase();
+    if (!from || !store.removeRequest(from.account.toLowerCase(), ml)) {
+      return this.send(conn, { t: 'error', text: 'That friend request is no longer there.' });
+    }
+    if (accept) {
+      store.addFriendship(ml, from.account.toLowerCase());
+      this.tellAccount(me, `You and ${from.account} are now friends.`);
+      this.tellAccount(from.account, `${me} accepted your friend request.`);
+    }
+    this.sendFriends(me);
+    this.sendFriends(from.account);
+  }
+
+  /** Unfriend someone, cancel a request you sent, or decline one you received. */
+  private onFriendRemove(conn: Conn, whoRaw: string): void {
+    const me = conn.account!;
+    const ml = me.toLowerCase();
+    const who = this.policy.lookup(whoRaw.trim());
+    const wl = (who?.account ?? whoRaw.trim()).toLowerCase();
+    const changed = store.removeFriendship(ml, wl) || store.removeRequest(ml, wl) || store.removeRequest(wl, ml);
+    if (!changed) return this.send(conn, { t: 'error', text: 'You are not friends with them.' });
+    this.sendFriends(me);
+    if (who) this.sendFriends(who.account);
+  }
 
   private onDm(conn: Conn, toRaw: string, text: string, kind?: 'action'): void {
     const me = conn.account!;
@@ -518,6 +720,14 @@ export class ChatServer {
         if (this.policy.isAdmin(t.account)) return fail('You cannot block an administrator.');
         store.addBlock(me.toLowerCase(), t.account.toLowerCase());
         this.blocksFor(me.toLowerCase()).add(t.account.toLowerCase());
+        // Blocking someone ends any friendship or pending request between you.
+        const ml = me.toLowerCase();
+        const tl = t.account.toLowerCase();
+        store.removeFriendship(ml, tl);
+        store.removeRequest(ml, tl);
+        store.removeRequest(tl, ml);
+        this.sendFriends(me);
+        this.sendFriends(t.account);
         return note(`You blocked ${t.account}. You will not see their messages and they cannot message you.`);
       }
       case 'unblock': {
@@ -956,6 +1166,23 @@ export class ChatServer {
     } else {
       this.destroyRoom(room, `${label(room)} was closed by an administrator.`);
     }
+    return true;
+  }
+
+  /** Tell every administrator who is online. */
+  notifyAdmins(text: string): void {
+    for (const c of this.conns.values()) {
+      if (c.account && this.policy.isAdmin(c.account)) this.send(c, { t: 'info', text });
+    }
+  }
+
+  /** Delete a message on an admin's behalf (from the report queue). */
+  deleteMessageAdmin(roomName: string, id: string, by: string): boolean {
+    const room = normalizeRoom(roomName);
+    const msg = store.getMessage(room, id);
+    if (!msg || msg.deleted) return false;
+    store.deleteMessage(id, `${by} (admin)`);
+    this.broadcast(room, { t: 'deleted', room, id });
     return true;
   }
 

@@ -26,6 +26,28 @@ export interface AdminStats {
   suspended: number;
   admins: number;
   newThisWeek: number;
+  /** Reported messages waiting for an admin. */
+  openReports: number;
+}
+
+/** A message someone reported, for the admin review queue. */
+export interface AdminReport {
+  id: number;
+  ts: number;
+  reporter: string;
+  room: string;
+  messageId: string;
+  author: string;
+  /** The message text as it was when reported. */
+  text: string;
+  /** A picture on the message, if any. */
+  image: string | null;
+  reason: string | null;
+  status: 'open' | 'resolved';
+  resolvedBy: string | null;
+  resolvedAt: number | null;
+  /** What was done: 'deleted', 'dismissed' or 'handled'. */
+  resolution: string | null;
 }
 
 export interface AdminUser {

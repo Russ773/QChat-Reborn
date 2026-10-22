@@ -143,6 +143,57 @@ db.exec(`
     blockedLower TEXT NOT NULL,
     PRIMARY KEY (accountLower, blockedLower)
   );
+
+  -- Emoji reactions on room messages.
+  CREATE TABLE IF NOT EXISTS reactions (
+    messageId    TEXT NOT NULL,
+    accountLower TEXT NOT NULL,
+    account      TEXT NOT NULL,
+    emoji        TEXT NOT NULL,
+    PRIMARY KEY (messageId, accountLower, emoji)
+  );
+
+  -- Messages members have reported, for admins to review.
+  CREATE TABLE IF NOT EXISTS reports (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          INTEGER NOT NULL,
+    reporter    TEXT NOT NULL,
+    reporterLower TEXT NOT NULL,
+    room        TEXT NOT NULL,
+    messageId   TEXT NOT NULL,
+    author      TEXT NOT NULL,
+    text        TEXT NOT NULL,
+    image       TEXT,
+    reason      TEXT,
+    status      TEXT NOT NULL DEFAULT 'open',
+    resolvedBy  TEXT,
+    resolvedAt  INTEGER,
+    resolution  TEXT,
+    UNIQUE (reporterLower, messageId)
+  );
+
+  -- Friends are mutual: an accepted friendship is stored once per direction.
+  CREATE TABLE IF NOT EXISTS friends (
+    accountLower TEXT NOT NULL,
+    friendLower  TEXT NOT NULL,
+    PRIMARY KEY (accountLower, friendLower)
+  );
+  CREATE TABLE IF NOT EXISTS friend_requests (
+    fromLower TEXT NOT NULL,
+    fromName  TEXT NOT NULL,
+    toLower   TEXT NOT NULL,
+    toName    TEXT NOT NULL,
+    ts        INTEGER NOT NULL,
+    PRIMARY KEY (fromLower, toLower)
+  );
+
+  -- Pictures members have uploaded.
+  CREATE TABLE IF NOT EXISTS uploads (
+    name       TEXT PRIMARY KEY,
+    ownerLower TEXT NOT NULL,
+    ts         INTEGER NOT NULL,
+    size       INTEGER NOT NULL
+  );
 `);
 
 /** Add a column to an existing table if an older database lacks it. */
@@ -158,3 +209,5 @@ addColumn('accounts', 'role', "TEXT NOT NULL DEFAULT 'user'");
 addColumn('accounts', 'suspended', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('accounts', 'suspendedReason', 'TEXT');
 addColumn('accounts', 'lastLogin', 'INTEGER');
+addColumn('messages', 'replyTo', 'TEXT');
+addColumn('messages', 'image', 'TEXT');

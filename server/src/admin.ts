@@ -13,10 +13,11 @@ import {
 } from './accounts.js';
 import { removeAvatars } from './avatars.js';
 import type { ChatServer } from './chat/server.js';
-import { purgeAccount } from './chat/store.js';
+import { getReport, listReports, openReportCount, purgeAccount, resolveReport } from './chat/store.js';
 import { db } from './db.js';
 import { bearer, readBody, send } from './httpUtil.js';
 import { getSettings, saveSettings } from './settings.js';
+import { removeUploadFiles } from './uploads.js';
 
 // --- Audit log ---------------------------------------------------------------
 
@@ -44,6 +45,7 @@ function stats(chat: ChatServer): AdminStats {
     suspended: n('SELECT COUNT(*) AS n FROM accounts WHERE suspended = 1'),
     admins: n("SELECT COUNT(*) AS n FROM accounts WHERE role = 'admin'"),
     newThisWeek: n('SELECT COUNT(*) AS n FROM accounts WHERE createdAt > ?', Date.now() - 7 * 24 * 3600 * 1000),
+    openReports: openReportCount(),
   };
 }
 
@@ -138,6 +140,34 @@ export async function handleAdmin(
     return true;
   }
 
+  // --- Reported messages ---
+  if (seg[0] === 'reports') {
+    if (seg.length === 1 && method === 'GET') {
+      const status = params.get('status') === 'all' ? 'all' : 'open';
+      send(res, 200, { reports: listReports(status, 200) });
+      return true;
+    }
+    const id = Number(seg[1]);
+    if (method === 'POST' && seg[2] === 'resolve' && Number.isInteger(id)) {
+      const report = getReport(id);
+      if (!report) return deny(res, 'No such report.', 404);
+      if (report.status !== 'open') return deny(res, 'That report has already been dealt with.');
+      const action = String((await readBody(req)).action ?? '');
+      if (action !== 'delete' && action !== 'dismiss' && action !== 'handled') {
+        return deny(res, 'Choose delete, dismiss or handled.', 422);
+      }
+      const resolution = action === 'delete' ? 'deleted' : action === 'dismiss' ? 'dismissed' : 'handled';
+      if (action === 'delete') chat.deleteMessageAdmin(report.room, report.messageId, me);
+      // Everyone who reported the same message is dealt with together.
+      for (const r of listReports('open', 500)) {
+        if (r.id === id || r.messageId === report.messageId) resolveReport(r.id, me, resolution);
+      }
+      audit(me, 'resolve-report', report.author, `${resolution} (report #${id})`);
+      send(res, 200, { ok: true });
+      return true;
+    }
+  }
+
   if (seg[0] === 'announce' && method === 'POST') {
     const b = await readBody(req);
     const text = String(b.text ?? '').trim().slice(0, 500);
@@ -174,7 +204,7 @@ export async function handleAdmin(
       if (targetRole === 'admin') return deny(res, 'Remove their admin role before deleting the account.');
       chat.kickAccount(target, 'Your account has been deleted.');
       removeAvatars(target);
-      purgeAccount(target);
+      removeUploadFiles(purgeAccount(target));
       deleteAccount(target);
       audit(me, 'delete-member', target);
       send(res, 200, { ok: true });

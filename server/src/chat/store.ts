@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ChatLine, Dm, DmThread, RoomTopic } from '@qchat/shared';
+import type { AdminReport, ChatLine, Dm, DmThread, ReplyRef, RoomTopic } from '@qchat/shared';
 import { db } from '../db.js';
 
 const now = () => Date.now();
@@ -64,6 +64,7 @@ export function setTopic(name: string, text: string | null, by: string): void {
 
 /** Delete a room and everything attached to it. */
 export function deleteRoom(name: string): void {
+  db.prepare('DELETE FROM reactions WHERE messageId IN (SELECT id FROM messages WHERE room = ?)').run(name);
   for (const t of ['messages', 'room_mods', 'room_bans', 'room_mutes']) {
     db.prepare(`DELETE FROM ${t} WHERE room = ?`).run(name);
   }
@@ -72,6 +73,7 @@ export function deleteRoom(name: string): void {
 
 /** Keep the room but throw away its messages. */
 export function clearRoom(name: string): void {
+  db.prepare('DELETE FROM reactions WHERE messageId IN (SELECT id FROM messages WHERE room = ?)').run(name);
   db.prepare('DELETE FROM messages WHERE room = ?').run(name);
 }
 
@@ -135,6 +137,13 @@ export function activeMute(room: string, accountLower: string): { until: number 
   }
   return { until: r.until };
 }
+export function listMutes(room: string): { accountLower: string; until: number | null }[] {
+  db.prepare('DELETE FROM room_mutes WHERE room = ? AND until IS NOT NULL AND until <= ?').run(room, now());
+  return db.prepare('SELECT accountLower, until FROM room_mutes WHERE room = ?').all(room) as unknown as {
+    accountLower: string;
+    until: number | null;
+  }[];
+}
 export function addMute(room: string, accountLower: string, until: number | null, by: string, reason: string | null): void {
   db.prepare('INSERT OR REPLACE INTO room_mutes (room, accountLower, until, mutedBy, reason) VALUES (?, ?, ?, ?, ?)')
     .run(room, accountLower, until, by, reason);
@@ -148,50 +157,106 @@ export function removeMute(room: string, accountLower: string): boolean {
 interface MsgRow {
   seq: number;
   id: string;
+  room: string;
   fromName: string;
   kind: string | null;
   text: string;
   ts: number;
   editedAt: number | null;
+  image: string | null;
+  replyTo: string | null;
+  // The message being replied to (joined in).
+  rId: string | null;
+  rFrom: string | null;
+  rText: string | null;
+  rDeleted: number | null;
 }
 
-const toLine = (r: MsgRow): ChatLine => ({
-  id: r.id,
-  seq: r.seq,
-  from: r.fromName,
-  text: r.text,
-  ts: r.ts,
-  ...(r.kind === 'action' ? { kind: 'action' as const } : {}),
-  ...(r.editedAt ? { edited: r.editedAt } : {}),
-});
+const MSG_SELECT = `SELECT m.seq, m.id, m.room, m.fromName, m.kind, m.text, m.ts, m.editedAt, m.image, m.replyTo,
+    r.id AS rId, r.fromName AS rFrom, r.text AS rText, r.deleted AS rDeleted
+  FROM messages m LEFT JOIN messages r ON r.id = m.replyTo`;
 
-export function addMessage(room: string, from: string, kind: 'action' | undefined, text: string): ChatLine {
+const SNIPPET = 100;
+
+function replyRef(r: MsgRow): ReplyRef | undefined {
+  if (!r.replyTo) return undefined;
+  // The original may be deleted, or trimmed away entirely.
+  if (!r.rId || r.rDeleted) return { id: r.replyTo, from: r.rFrom ?? '', text: '', deleted: true };
+  return { id: r.rId, from: r.rFrom ?? '', text: (r.rText ?? '').slice(0, SNIPPET) };
+}
+
+function toLines(rows: MsgRow[]): ChatLine[] {
+  const reacts = reactionsFor(rows.map((r) => r.id));
+  return rows.map((r) => {
+    const reply = replyRef(r);
+    const rx = reacts.get(r.id);
+    return {
+      id: r.id,
+      seq: r.seq,
+      from: r.fromName,
+      text: r.text,
+      ts: r.ts,
+      ...(r.kind === 'action' ? { kind: 'action' as const } : {}),
+      ...(r.editedAt ? { edited: r.editedAt } : {}),
+      ...(reply ? { replyTo: reply } : {}),
+      ...(r.image ? { image: r.image } : {}),
+      ...(rx ? { reactions: rx } : {}),
+    };
+  });
+}
+
+export interface NewMessage {
+  replyTo?: string;
+  image?: string;
+}
+
+export function addMessage(room: string, from: string, kind: 'action' | undefined, text: string, extra: NewMessage = {}): ChatLine {
   const id = randomUUID();
   const ts = now();
   const r = db
-    .prepare('INSERT INTO messages (id, room, fromName, fromLower, kind, text, ts) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(id, room, from, from.toLowerCase(), kind ?? null, text, ts);
-  return { id, seq: Number(r.lastInsertRowid), from, text, ts, ...(kind ? { kind } : {}) };
+    .prepare('INSERT INTO messages (id, room, fromName, fromLower, kind, text, ts, replyTo, image) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, room, from, from.toLowerCase(), kind ?? null, text, ts, extra.replyTo ?? null, extra.image ?? null);
+  const row = db.prepare(`${MSG_SELECT} WHERE m.seq = ?`).get(Number(r.lastInsertRowid)) as unknown as MsgRow;
+  return toLines([row])[0];
 }
 
 /** A page of saved messages, oldest first, ending just before `before`. */
 export function getMessages(room: string, before: number | undefined, limit: number): { lines: ChatLine[]; more: boolean } {
   const rows = (
     before
-      ? db
-          .prepare('SELECT * FROM messages WHERE room = ? AND deleted = 0 AND seq < ? ORDER BY seq DESC LIMIT ?')
-          .all(room, before, limit + 1)
-      : db.prepare('SELECT * FROM messages WHERE room = ? AND deleted = 0 ORDER BY seq DESC LIMIT ?').all(room, limit + 1)
+      ? db.prepare(`${MSG_SELECT} WHERE m.room = ? AND m.deleted = 0 AND m.seq < ? ORDER BY m.seq DESC LIMIT ?`).all(room, before, limit + 1)
+      : db.prepare(`${MSG_SELECT} WHERE m.room = ? AND m.deleted = 0 ORDER BY m.seq DESC LIMIT ?`).all(room, limit + 1)
   ) as unknown as MsgRow[];
   const more = rows.length > limit;
-  return { lines: rows.slice(0, limit).reverse().map(toLine), more };
+  return { lines: toLines(rows.slice(0, limit).reverse()), more };
 }
 
-export function getMessage(room: string, id: string): { seq: number; fromLower: string; kind: string | null; deleted: boolean } | undefined {
-  const r = db.prepare('SELECT seq, fromLower, kind, deleted FROM messages WHERE room = ? AND id = ?').get(room, id) as
-    | { seq: number; fromLower: string; kind: string | null; deleted: number }
-    | undefined;
-  return r ? { seq: r.seq, fromLower: r.fromLower, kind: r.kind, deleted: !!r.deleted } : undefined;
+/** Find text in a room's saved messages (newest first). */
+export function searchMessages(room: string, query: string, limit: number): ChatLine[] {
+  const like = `%${query.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+  const rows = db
+    .prepare(`${MSG_SELECT} WHERE m.room = ? AND m.deleted = 0 AND m.text LIKE ? ESCAPE '\\' ORDER BY m.seq DESC LIMIT ?`)
+    .all(room, like, limit) as unknown as MsgRow[];
+  return toLines(rows);
+}
+
+export interface MessageInfo {
+  id: string;
+  seq: number;
+  room: string;
+  fromName: string;
+  fromLower: string;
+  kind: string | null;
+  text: string;
+  image: string | null;
+  deleted: boolean;
+}
+
+export function getMessage(room: string, id: string): MessageInfo | undefined {
+  const r = db
+    .prepare('SELECT id, seq, room, fromName, fromLower, kind, text, image, deleted FROM messages WHERE room = ? AND id = ?')
+    .get(room, id) as (Omit<MessageInfo, 'deleted'> & { deleted: number }) | undefined;
+  return r ? { ...r, deleted: !!r.deleted } : undefined;
 }
 
 export function editMessage(id: string, text: string): number {
@@ -217,6 +282,82 @@ export function trimMessages(keep: number): void {
     const c = cut.get(room, keep) as { seq: number } | undefined;
     if (c) del.run(room, c.seq);
   }
+  db.prepare('DELETE FROM reactions WHERE messageId NOT IN (SELECT id FROM messages)').run();
+}
+
+// --- Reactions ---------------------------------------------------------------------
+
+/** Who reacted with what, for a set of messages. */
+export function reactionsFor(ids: string[]): Map<string, Record<string, string[]>> {
+  const out = new Map<string, Record<string, string[]>>();
+  if (ids.length === 0) return out;
+  const rows = db
+    .prepare(`SELECT messageId, emoji, account FROM reactions WHERE messageId IN (${ids.map(() => '?').join(',')}) ORDER BY rowid`)
+    .all(...ids) as { messageId: string; emoji: string; account: string }[];
+  for (const r of rows) {
+    const m = out.get(r.messageId) ?? {};
+    (m[r.emoji] ??= []).push(r.account);
+    out.set(r.messageId, m);
+  }
+  return out;
+}
+
+/** Add the reaction, or remove it if this person already made it. Returns the message's reactions. */
+export function toggleReaction(messageId: string, account: string, emoji: string): Record<string, string[]> {
+  const l = account.toLowerCase();
+  const had = db.prepare('DELETE FROM reactions WHERE messageId = ? AND accountLower = ? AND emoji = ?').run(messageId, l, emoji);
+  if (Number(had.changes) === 0) {
+    db.prepare('INSERT INTO reactions (messageId, accountLower, account, emoji) VALUES (?, ?, ?, ?)').run(messageId, l, account, emoji);
+  }
+  return reactionsFor([messageId]).get(messageId) ?? {};
+}
+
+export function countReactionKinds(messageId: string): number {
+  return (db.prepare('SELECT COUNT(DISTINCT emoji) AS n FROM reactions WHERE messageId = ?').get(messageId) as { n: number }).n;
+}
+
+// --- Reports ----------------------------------------------------------------------------
+
+type RawReport = Omit<AdminReport, 'status'> & { status: string };
+
+/** File a report. Returns false if this person already reported this message. */
+export function addReport(
+  reporter: string,
+  msg: { id: string; room: string; fromName: string; text: string; image: string | null },
+  reason: string | null,
+): boolean {
+  try {
+    db.prepare(
+      `INSERT INTO reports (ts, reporter, reporterLower, room, messageId, author, text, image, reason)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(now(), reporter, reporter.toLowerCase(), msg.room, msg.id, msg.fromName, msg.text, msg.image, reason);
+    return true;
+  } catch {
+    return false; // UNIQUE (reporter, message)
+  }
+}
+
+export function listReports(status: 'open' | 'all', limit: number): AdminReport[] {
+  const rows = (
+    status === 'open'
+      ? db.prepare("SELECT * FROM reports WHERE status = 'open' ORDER BY id DESC LIMIT ?").all(limit)
+      : db.prepare('SELECT * FROM reports ORDER BY id DESC LIMIT ?').all(limit)
+  ) as unknown as RawReport[];
+  return rows.map((r) => ({ ...r, status: r.status === 'open' ? 'open' : 'resolved' }));
+}
+
+export function getReport(id: number): AdminReport | undefined {
+  const r = db.prepare('SELECT * FROM reports WHERE id = ?').get(id) as unknown as RawReport | undefined;
+  return r ? { ...r, status: r.status === 'open' ? 'open' : 'resolved' } : undefined;
+}
+
+export function resolveReport(id: number, by: string, resolution: string): void {
+  db.prepare("UPDATE reports SET status = 'resolved', resolvedBy = ?, resolvedAt = ?, resolution = ? WHERE id = ?")
+    .run(by, now(), resolution, id);
+}
+
+export function openReportCount(): number {
+  return (db.prepare("SELECT COUNT(*) AS n FROM reports WHERE status = 'open'").get() as { n: number }).n;
 }
 
 // --- Private messages --------------------------------------------------------------
@@ -315,9 +456,65 @@ export function removeBlock(accountLower: string, blockedLower: string): boolean
   return Number(db.prepare('DELETE FROM blocks WHERE accountLower = ? AND blockedLower = ?').run(accountLower, blockedLower).changes) > 0;
 }
 
+// --- Friends ----------------------------------------------------------------------------
+
+export function areFriends(a: string, b: string): boolean {
+  return !!db.prepare('SELECT 1 FROM friends WHERE accountLower = ? AND friendLower = ?').get(a, b);
+}
+export function friendsOf(accountLower: string): string[] {
+  return (db.prepare('SELECT friendLower FROM friends WHERE accountLower = ?').all(accountLower) as { friendLower: string }[]).map(
+    (r) => r.friendLower,
+  );
+}
+export function addFriendship(a: string, b: string): void {
+  const ins = db.prepare('INSERT OR IGNORE INTO friends (accountLower, friendLower) VALUES (?, ?)');
+  ins.run(a, b);
+  ins.run(b, a);
+}
+export function removeFriendship(a: string, b: string): boolean {
+  const d = db.prepare('DELETE FROM friends WHERE accountLower = ? AND friendLower = ?');
+  const n = Number(d.run(a, b).changes) + Number(d.run(b, a).changes);
+  return n > 0;
+}
+
+export function hasRequest(fromLower: string, toLower: string): boolean {
+  return !!db.prepare('SELECT 1 FROM friend_requests WHERE fromLower = ? AND toLower = ?').get(fromLower, toLower);
+}
+export function addRequest(from: string, to: string): void {
+  db.prepare('INSERT OR IGNORE INTO friend_requests (fromLower, fromName, toLower, toName, ts) VALUES (?, ?, ?, ?, ?)')
+    .run(from.toLowerCase(), from, to.toLowerCase(), to, now());
+}
+export function removeRequest(fromLower: string, toLower: string): boolean {
+  return Number(db.prepare('DELETE FROM friend_requests WHERE fromLower = ? AND toLower = ?').run(fromLower, toLower).changes) > 0;
+}
+export function incomingRequests(toLower: string): string[] {
+  return (db.prepare('SELECT fromName FROM friend_requests WHERE toLower = ? ORDER BY ts').all(toLower) as { fromName: string }[]).map(
+    (r) => r.fromName,
+  );
+}
+export function outgoingRequests(fromLower: string): string[] {
+  return (db.prepare('SELECT toName FROM friend_requests WHERE fromLower = ? ORDER BY ts').all(fromLower) as { toName: string }[]).map(
+    (r) => r.toName,
+  );
+}
+
+// --- Uploads --------------------------------------------------------------------------------
+
+export function addUpload(name: string, ownerLower: string, size: number): void {
+  db.prepare('INSERT INTO uploads (name, ownerLower, ts, size) VALUES (?, ?, ?, ?)').run(name, ownerLower, now(), size);
+}
+export function uploadOwner(name: string): string | null {
+  const r = db.prepare('SELECT ownerLower FROM uploads WHERE name = ?').get(name) as { ownerLower: string } | undefined;
+  return r ? r.ownerLower : null;
+}
+export function countUploadsSince(ownerLower: string, since: number): number {
+  return (db.prepare('SELECT COUNT(*) AS n FROM uploads WHERE ownerLower = ? AND ts > ?').get(ownerLower, since) as { n: number }).n;
+}
+
 // --- Cleanup when an account is deleted -------------------------------------------------
 
-export function purgeAccount(account: string): void {
+/** Remove everything tied to an account. Returns the upload file names, so the caller can delete the files. */
+export function purgeAccount(account: string): string[] {
   const l = account.toLowerCase();
   db.prepare('DELETE FROM dms WHERE fromLower = ? OR toLower = ?').run(l, l);
   db.prepare('DELETE FROM dm_state WHERE accountLower = ? OR partnerLower = ?').run(l, l);
@@ -325,5 +522,11 @@ export function purgeAccount(account: string): void {
   db.prepare('DELETE FROM room_mods WHERE accountLower = ?').run(l);
   db.prepare('DELETE FROM room_bans WHERE accountLower = ?').run(l);
   db.prepare('DELETE FROM room_mutes WHERE accountLower = ?').run(l);
+  db.prepare('DELETE FROM friends WHERE accountLower = ? OR friendLower = ?').run(l, l);
+  db.prepare('DELETE FROM friend_requests WHERE fromLower = ? OR toLower = ?').run(l, l);
+  db.prepare('DELETE FROM reactions WHERE accountLower = ?').run(l);
   db.prepare('UPDATE rooms SET owner = NULL WHERE lower(owner) = ?').run(l);
+  const files = (db.prepare('SELECT name FROM uploads WHERE ownerLower = ?').all(l) as { name: string }[]).map((r) => r.name);
+  db.prepare('DELETE FROM uploads WHERE ownerLower = ?').run(l);
+  return files;
 }

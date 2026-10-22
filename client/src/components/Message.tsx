@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { REACTION_EMOJI } from '@qchat/shared';
 import type { ChatEvent } from '../types.js';
 import { classify, linkify } from '../media/urls.js';
 import { colorForNick } from '../colors.js';
@@ -6,6 +7,8 @@ import { Avatar } from './Avatar.js';
 
 interface Props {
   event: ChatEvent;
+  /** Your name, to highlight the reactions you made. */
+  me: string;
   /** True when this message continues a run from the same author (hide header). */
   grouped?: boolean;
   /** Invoked when a user clicks "add to queue" on a detected media link. */
@@ -14,13 +17,17 @@ interface Props {
   onEdit?: (text: string) => void;
   /** Present when the viewer may delete it (their own, or they moderate the room). */
   onDelete?: () => void;
+  onReply?: () => void;
+  onReact?: (emoji: string) => void;
+  /** Present when the viewer may report it (not their own). */
+  onReport?: () => void;
   /** Open the author's profile. */
   onProfile?: (name: string) => void;
   /** The author's profile photo, if they have one. */
   avatar?: string;
 }
 
-export function Message({ event, grouped, onEnqueue, onEdit, onDelete, onProfile, avatar }: Props) {
+export function Message({ event, me, grouped, onEnqueue, onEdit, onDelete, onReply, onReact, onReport, onProfile, avatar }: Props) {
   const time = new Date(event.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(event.text);
@@ -61,7 +68,7 @@ export function Message({ event, grouped, onEnqueue, onEdit, onDelete, onProfile
         <span className="action-text" style={{ color: colorForNick(event.from ?? '') }}>
           * {event.from} {renderText(event.text, onEnqueue)}
         </span>
-        <Tools onDelete={onDelete} />
+        <Tools onDelete={onDelete} onReport={onReport} />
       </div>
     );
   }
@@ -69,9 +76,11 @@ export function Message({ event, grouped, onEnqueue, onEdit, onDelete, onProfile
   const submitEdit = (e: React.FormEvent) => {
     e.preventDefault();
     const text = draft.trim();
-    if (text && text !== event.text) onEdit?.(text);
+    if (text !== event.text && (text || event.image)) onEdit?.(text);
     setEditing(false);
   };
+
+  const reactions = Object.entries(event.reactions ?? {}).filter(([, who]) => who.length > 0);
 
   return (
     <div className={`msg chat ${event.self ? 'self' : ''} ${grouped ? 'grouped' : ''} ${event.mention ? 'mention' : ''}`}>
@@ -109,11 +118,24 @@ export function Message({ event, grouped, onEnqueue, onEdit, onDelete, onProfile
         </form>
       ) : (
         <div className="bubble-row">
-          <div className="text" title={time}>
-            {renderText(event.text, onEnqueue)}
+          <div className={`text ${event.image ? 'has-image' : ''}`} title={time}>
+            {event.replyTo && (
+              <div className={`reply-quote ${event.replyTo.deleted ? 'gone' : ''}`}>
+                <b>{event.replyTo.from || 'Someone'}</b>
+                <span>{event.replyTo.deleted ? 'Original message deleted' : event.replyTo.text}</span>
+              </div>
+            )}
+            {event.image && (
+              <a href={event.image} target="_blank" rel="noreferrer noopener" className="msg-image-link">
+                <img className="msg-image" src={event.image} alt="Shared picture" loading="lazy" />
+              </a>
+            )}
+            {event.text && <div className="msg-text">{renderText(event.text, onEnqueue)}</div>}
             {event.edited && <span className="edited" title="This message was edited">(edited)</span>}
           </div>
           <Tools
+            onReply={onReply}
+            onReact={onReact}
             onEdit={
               onEdit
                 ? () => {
@@ -123,7 +145,28 @@ export function Message({ event, grouped, onEnqueue, onEdit, onDelete, onProfile
                 : undefined
             }
             onDelete={onDelete}
+            onReport={onReport}
           />
+        </div>
+      )}
+      {reactions.length > 0 && (
+        <div className="rx-row">
+          {reactions.map(([emoji, who]) => {
+            const mine = who.some((n) => n.toLowerCase() === me.toLowerCase());
+            return (
+              <button
+                key={emoji}
+                type="button"
+                className={`rx ${mine ? 'mine' : ''}`}
+                title={who.join(', ')}
+                disabled={!onReact}
+                onClick={() => onReact?.(emoji)}
+              >
+                <span>{emoji}</span>
+                <span className="rx-n">{who.length}</span>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
@@ -131,10 +174,51 @@ export function Message({ event, grouped, onEnqueue, onEdit, onDelete, onProfile
 }
 
 /** Hover buttons beside a message. */
-function Tools({ onEdit, onDelete }: { onEdit?: () => void; onDelete?: () => void }) {
-  if (!onEdit && !onDelete) return null;
+function Tools({
+  onReply,
+  onReact,
+  onEdit,
+  onDelete,
+  onReport,
+}: {
+  onReply?: () => void;
+  onReact?: (emoji: string) => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
+  onReport?: () => void;
+}) {
+  const [picking, setPicking] = useState(false);
+  if (!onReply && !onReact && !onEdit && !onDelete && !onReport) return null;
   return (
     <span className="msg-tools">
+      {onReact && (
+        <span className="rx-wrap">
+          <button type="button" title="React" aria-label="Add a reaction" onClick={() => setPicking((p) => !p)}>
+            ☺
+          </button>
+          {picking && (
+            <span className="rx-picker" onMouseLeave={() => setPicking(false)}>
+              {REACTION_EMOJI.map((e) => (
+                <button
+                  key={e}
+                  type="button"
+                  onClick={() => {
+                    onReact(e);
+                    setPicking(false);
+                  }}
+                >
+                  {e}
+                </button>
+              ))}
+            </span>
+          )}
+        </span>
+      )}
+      {onReply && (
+        <button type="button" title="Reply" aria-label="Reply to message" onClick={onReply}>
+          ↩
+        </button>
+      )}
       {onEdit && (
         <button type="button" title="Edit" aria-label="Edit message" onClick={onEdit}>
           ✎
@@ -143,6 +227,11 @@ function Tools({ onEdit, onDelete }: { onEdit?: () => void; onDelete?: () => voi
       {onDelete && (
         <button type="button" title="Delete" aria-label="Delete message" onClick={onDelete}>
           🗑
+        </button>
+      )}
+      {onReport && (
+        <button type="button" title="Report to the admins" aria-label="Report message" onClick={onReport}>
+          ⚑
         </button>
       )}
     </span>

@@ -4,7 +4,9 @@ import { handleAdmin } from './admin.js';
 import { accountForToken, createSession, getRole, login, logout, register } from './accounts.js';
 import { AVATAR_TYPES, MAX_AVATAR_BYTES, saveAvatar } from './avatars.js';
 import type { ChatServer } from './chat/server.js';
+import * as store from './chat/store.js';
 import { bearer, readBody, readRawBody, send } from './httpUtil.js';
+import { MAX_UPLOAD_BYTES, UPLOAD_LIMIT, UPLOAD_WINDOW, saveUploadFile, sniffImage } from './uploads.js';
 import { getPrefs, getProfile, publicProfile, saveProfile, savePrefs, setAvatar } from './profiles.js';
 import { getSettings } from './settings.js';
 
@@ -112,6 +114,32 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, chat:
       setAvatar(acct, url);
       send(res, 200, { avatar: url });
     }
+    return true;
+  }
+
+  if (path === '/api/upload' && method === 'POST') {
+    const acct = accountForToken(bearer(req));
+    if (!acct) {
+      send(res, 401, { error: 'Not logged in.' });
+      return true;
+    }
+    if (store.countUploadsSince(acct.toLowerCase(), Date.now() - UPLOAD_WINDOW) >= UPLOAD_LIMIT) {
+      send(res, 429, { error: 'You are uploading too quickly. Wait a few minutes and try again.' });
+      return true;
+    }
+    const buf = await readRawBody(req, MAX_UPLOAD_BYTES);
+    if (!buf) {
+      send(res, 413, { error: 'That picture is too big (the limit is 3 MB).' });
+      return true;
+    }
+    const ext = sniffImage(buf);
+    if (!ext) {
+      send(res, 415, { error: 'Only PNG, JPG, GIF and WebP pictures can be shared.' });
+      return true;
+    }
+    const name = saveUploadFile(buf, ext);
+    store.addUpload(name, acct.toLowerCase(), buf.length);
+    send(res, 200, { name, url: `/uploads/${name}` });
     return true;
   }
 
