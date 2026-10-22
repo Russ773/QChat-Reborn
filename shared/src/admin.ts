@@ -46,7 +46,10 @@ export interface AdminRoom {
   permanent: boolean;
   members: string[];
   media: MediaState | null;
+  /** Saved messages in the room. */
   lines: number;
+  owner?: string | null;
+  topic?: string | null;
 }
 
 export interface AuditEntry {

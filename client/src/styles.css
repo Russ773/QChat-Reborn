@@ -629,6 +629,76 @@ button.mini.danger:hover { background: rgba(255, 77, 109, 0.3); }
 .audit-admin { font-weight: 700; }
 .audit-detail { color: var(--faint); }
 
+/* --- Wave 1 chat features --------------------------------------------------- */
+.msg-head { align-items: center; }
+.msg-head .nick {
+  background: none; border: 0; padding: 0; border-radius: 0; font: inherit; font-weight: 700; font-size: 0.9rem; cursor: pointer;
+}
+.msg-head .nick:hover { text-decoration: underline; filter: none; transform: none; }
+.head-avatar { display: flex; padding: 0; background: none; border: 0; border-radius: 50%; }
+.head-avatar:hover { filter: none; transform: none; }
+
+.bubble-row { display: flex; align-items: center; gap: 6px; width: 100%; }
+.msg.self .bubble-row { flex-direction: row-reverse; }
+.msg-tools { display: none; gap: 3px; flex: 0 0 auto; }
+.msg:hover .msg-tools, .msg:focus-within .msg-tools { display: inline-flex; }
+.msg-tools button {
+  padding: 2px 7px; font-size: 0.78rem; border-radius: 8px; color: var(--dim);
+  background: var(--glass-2); border: 1px solid var(--line);
+}
+.msg-tools button:hover { color: var(--paper); filter: none; transform: none; background: rgba(255, 255, 255, 0.14); }
+.edited { margin-left: 6px; font-size: 0.7rem; color: var(--faint); }
+.msg.self .edited { color: rgba(255, 255, 255, 0.7); }
+.edit-form { width: min(520px, 100%); }
+.edit-form input { width: 100%; }
+.edit-hint { display: block; margin-top: 3px; font-size: 0.7rem; color: var(--faint); }
+
+.msg.mention .text { background: rgba(255, 201, 60, 0.14); box-shadow: 0 0 0 2px rgba(255, 201, 60, 0.55); }
+.msg.action {
+  display: flex; align-items: center; gap: 8px; align-self: flex-start; margin: 3px 0;
+  font-style: italic; padding: 2px 10px; border-radius: 10px;
+}
+.msg.action .action-text { font-style: italic; overflow-wrap: anywhere; }
+.msg.action.mention { background: rgba(255, 201, 60, 0.14); box-shadow: 0 0 0 2px rgba(255, 201, 60, 0.4); }
+.msg.action .ts { color: var(--faint); font-size: 0.68rem; font-style: normal; }
+
+.load-earlier {
+  align-self: center; margin-bottom: 8px; padding: 6px 16px; border-radius: 999px; font-size: 0.82rem;
+  color: var(--paper); background: var(--glass-2); border: 1px solid var(--line);
+}
+.load-earlier:hover { filter: none; transform: none; background: rgba(255, 255, 255, 0.14); }
+.typing-line { min-height: 20px; padding: 0 22px 2px; font-size: 0.78rem; font-style: italic; color: var(--dim); }
+
+.cmd-hints {
+  margin: 0 14px; border: 1px solid var(--line); border-radius: 14px; overflow: hidden;
+  background: #171433; box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.35);
+}
+.cmd-hint {
+  display: flex; align-items: baseline; gap: 12px; width: 100%; text-align: left; border-radius: 0;
+  padding: 8px 14px; color: var(--paper); background: transparent;
+}
+.cmd-hint b { flex: 0 0 auto; color: var(--gold); }
+.cmd-hint span { color: var(--dim); font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmd-hint:hover { background: var(--glass-2); filter: none; transform: none; }
+
+.chan-title { flex-wrap: wrap; }
+.chan-topic {
+  margin-left: 6px; padding-left: 12px; max-width: 48ch; font-size: 0.85rem; color: var(--dim);
+  border-left: 1px solid var(--line); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dm-head { display: flex; align-items: center; gap: 10px; padding: 2px 10px 2px 2px; color: var(--paper); background: transparent; border-radius: 14px; }
+.dm-head:hover { background: var(--glass); filter: none; transform: none; }
+.nav-label-row { display: flex; align-items: center; justify-content: space-between; padding-right: 2px; }
+.mini-plus { width: 24px; height: 24px; padding: 0; border-radius: 8px; font-size: 1.1rem; line-height: 1; }
+.buffer.dm { gap: 10px; }
+.badge.mention { background: linear-gradient(135deg, var(--gold), var(--pink)); }
+.member-item.away { opacity: 0.55; }
+.role-icon { margin-left: auto; font-size: 0.8rem; }
+.room-topic { color: var(--dim); font-size: 0.82rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rc-topic { color: var(--dim); font-size: 0.85rem; font-style: italic; }
+.pm-message { align-items: center; }
+.pm-note { margin-right: auto; color: var(--faint); font-size: 0.85rem; }
+
 @media (max-width: 900px) {
   .admin-page { grid-template-columns: 1fr; }
   .admin-nav { position: static; height: auto; }

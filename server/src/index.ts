@@ -3,10 +3,11 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { basename, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { accountForToken, ensureAdmins, isAdmin } from './accounts.js';
+import { accountForToken, ensureAdmins, isAdmin, lookupAccount } from './accounts.js';
 import { avatarsDir } from './avatars.js';
 import { handleApi } from './api.js';
 import { ChatServer } from './chat/server.js';
+import { getPrefs } from './profiles.js';
 import { getSettings } from './settings.js';
 
 const HTTP_PORT = Number(process.env.HTTP_PORT ?? 8080);
@@ -19,6 +20,8 @@ const chat = new ChatServer(log, {
   welcome: () => getSettings().welcomeMessage,
   maintenance: () => getSettings().maintenance,
   isAdmin: (account) => isAdmin(account),
+  lookup: (name) => lookupAccount(name),
+  allowsPm: (account) => getPrefs(account).allowPm,
 });
 
 // --- Static client --------------------------------------------------------
@@ -89,7 +92,9 @@ const http = createServer((req, res) => {
     if (!res.headersSent) res.writeHead(500).end('error');
   });
 });
-const wss = new WebSocketServer({ server: http, path: '/ws' });
+// A chat message is at most 2000 characters; 16 KB leaves plenty of room for the
+// envelope and refuses anything absurd before it is parsed.
+const wss = new WebSocketServer({ server: http, path: '/ws', maxPayload: 16 * 1024 });
 
 wss.on('connection', (ws) => {
   log('ws connection');

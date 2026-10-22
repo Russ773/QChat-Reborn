@@ -9,6 +9,10 @@ interface Props {
   onClose: () => void;
   onSave?: (patch: Partial<Profile>) => Promise<void>;
   onUploadAvatar?: (file: File) => Promise<string>;
+  /** Start a private chat with this member (not shown on your own profile). */
+  onMessage?: () => void;
+  /** False when they have turned private messages off. */
+  canMessage?: boolean;
 }
 
 const FACTS: (keyof Profile)[] = [
@@ -25,7 +29,7 @@ function initForm(p: Profile | null): Record<string, string> {
   return form;
 }
 
-export function ProfileModal({ account, profile, editable, onClose, onSave, onUploadAvatar }: Props) {
+export function ProfileModal({ account, profile, editable, onClose, onSave, onUploadAvatar, onMessage, canMessage = true }: Props) {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<Record<string, string>>(() => initForm(profile));
   const [accent, setAccent] = useState(profile?.accent || '#7c8cff');
@@ -151,6 +155,12 @@ export function ProfileModal({ account, profile, editable, onClose, onSave, onUp
             {editable && (
               <div className="pm-actions">
                 <button onClick={() => setEditing(true)}>Edit profile</button>
+              </div>
+            )}
+            {!editable && onMessage && (
+              <div className="pm-actions pm-message">
+                {!canMessage && <span className="pm-note">Not accepting private messages</span>}
+                <button disabled={!canMessage} onClick={onMessage}>Send message</button>
               </div>
             )}
           </div>

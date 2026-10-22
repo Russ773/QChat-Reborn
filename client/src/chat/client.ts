@@ -40,8 +40,8 @@ export class ChatClient {
     }
   }
 
-  join(room: string): void {
-    this.send({ t: 'join', room });
+  join(room: string, restore = false): void {
+    this.send({ t: 'join', room, restore: restore || undefined });
   }
   leave(room: string): void {
     this.send({ t: 'leave', room });
@@ -63,6 +63,30 @@ export class ChatClient {
   }
   listRooms(): void {
     this.send({ t: 'listRooms' });
+  }
+  history(room: string, before: number): void {
+    this.send({ t: 'history', room, before });
+  }
+  typing(room: string): void {
+    this.send({ t: 'typing', room });
+  }
+  edit(room: string, id: string, text: string): void {
+    this.send({ t: 'edit', room, id, text });
+  }
+  remove(room: string, id: string): void {
+    this.send({ t: 'delete', room, id });
+  }
+  dm(to: string, text: string): void {
+    this.send({ t: 'dm', to, text });
+  }
+  dmHistory(withName: string, before?: number): void {
+    this.send({ t: 'dmHistory', with: withName, before });
+  }
+  dmRead(withName: string): void {
+    this.send({ t: 'dmRead', with: withName });
+  }
+  dmTyping(to: string): void {
+    this.send({ t: 'dmTyping', to });
   }
   close(): void {
     this.ws?.close();

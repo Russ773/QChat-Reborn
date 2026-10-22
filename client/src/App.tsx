@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Profile } from '@qchat/shared';
-import type { ChatEvent } from './types.js';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { Profile, RoomRole } from '@qchat/shared';
+import { dmKey, isDmKey } from './types.js';
 import {
   getProfile,
   getToken,
@@ -14,30 +14,36 @@ import {
 } from './api.js';
 import { AdminPage } from './admin/AdminPage.js';
 import { Avatar } from './components/Avatar.js';
-import { EmojiPicker } from './components/EmojiPicker.js';
+import { Conversation } from './components/Conversation.js';
 import { Gate } from './components/Gate.js';
 import { LogoMark, Wordmark } from './components/Logo.js';
 import { MediaPanel } from './components/MediaPanel.js';
-import { Message } from './components/Message.js';
+import { NewMessageModal } from './components/NewMessageModal.js';
 import { PreferencesModal } from './components/PreferencesModal.js';
 import { ProfileModal } from './components/ProfileModal.js';
 import { RoomsModal } from './components/RoomsModal.js';
 import { SoundPicker } from './components/SoundPicker.js';
 import { playSound as playSoundFx } from './media/sounds.js';
+import { useAvatars } from './useAvatars.js';
 import { useChat } from './useChat.js';
 
 interface ModalTarget {
   account: string;
   profile: Profile | null;
   editable: boolean;
+  allowPm: boolean;
 }
 
 const isAdminPath = () => window.location.pathname.replace(/\/+$/, '') === '/admin';
 const roomLabel = (name: string) => name.replace(/^#/, '');
+const roleRank = (r?: RoomRole) => (r === 'admin' ? 4 : r === 'owner' ? 3 : r === 'mod' ? 2 : 0);
+const ROLE_ICON: Record<RoomRole, string> = { admin: '⭐', owner: '👑', mod: '🛡️' };
+const ROLE_NAME: Record<RoomRole, string> = { admin: 'Admin', owner: 'Room owner', mod: 'Moderator' };
 
 export default function App() {
   const chat = useChat();
   const { state, status } = chat;
+  const { avatarFor, setAvatar } = useAvatars();
   const [token, setTok] = useState<string | null>(getToken());
   const [role, setRole] = useState<Role | null>(null);
   const [myProfile, setMyProfile] = useState<Profile | null>(null);
@@ -47,9 +53,9 @@ export default function App() {
   const [modal, setModal] = useState<ModalTarget | null>(null);
   const [showPrefs, setShowPrefs] = useState(false);
   const [showRooms, setShowRooms] = useState(false);
+  const [showNewDm, setShowNewDm] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [autoplay, setAutoplay] = useState(true);
-  const [draft, setDraft] = useState('');
 
   // Keep the page address and the view in step (so /admin works and Back works).
   const go = useCallback((next: 'chat' | 'admin') => {
@@ -82,6 +88,26 @@ export default function App() {
     if (ls && (autoplay || ls.from === state.nick)) playSoundFx(ls.sound);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.lastSound?.id]);
+
+  // A soft sound for a mention or a new private message.
+  useEffect(() => {
+    const a = state.alert;
+    if (a && autoplay) playSoundFx(a.kind === 'dm' ? 'ding' : 'pop');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.alert?.id]);
+
+  // Unread private messages and mentions show in the browser tab.
+  const unreadDms = state.threads.reduce((n, t) => n + t.unread, 0);
+  const unreadMentions = Object.values(state.rooms).reduce((n, r) => n + r.mentions, 0);
+  const attention = unreadDms + unreadMentions;
+  useEffect(() => {
+    document.title = attention > 0 ? `(${attention}) QChat Reborn` : 'QChat Reborn';
+  }, [attention]);
+
+  // Show your own photo wherever your name appears.
+  useEffect(() => {
+    if (state.account && myProfile) setAvatar(state.account, myProfile.avatar);
+  }, [state.account, myProfile?.avatar, setAvatar]);
 
   // Resume a stored session on first load.
   useEffect(() => {
@@ -126,13 +152,13 @@ export default function App() {
   };
 
   const openOwnProfile = () => {
-    if (state.account) setModal({ account: state.account, profile: myProfile, editable: true });
+    if (state.account) setModal({ account: state.account, profile: myProfile, editable: true, allowPm: true });
   };
   const openMember = (nick: string) => {
     const editable = !!state.account && state.account.toLowerCase() === nick.toLowerCase();
     getProfile(nick)
-      .then((p) => setModal({ account: nick, profile: p, editable }))
-      .catch(() => setModal({ account: nick, profile: null, editable }));
+      .then((r) => setModal({ account: nick, profile: r.profile, editable, allowPm: r.allowPm }))
+      .catch(() => setModal({ account: nick, profile: null, editable, allowPm: true }));
   };
   const onSaveProfile = async (patch: Partial<Profile>) => {
     if (!token) throw new Error('Not logged in.');
@@ -144,11 +170,18 @@ export default function App() {
     if (!token) throw new Error('Not logged in.');
     const url = await uploadAvatar(token, file);
     setMyProfile((p) => ({ ...(p ?? { account: state.account! }), avatar: url }));
-    setModal((m) =>
-      m ? { ...m, profile: { ...(m.profile ?? { account: m.account }), avatar: url } } : m,
-    );
+    setModal((m) => (m ? { ...m, profile: { ...(m.profile ?? { account: m.account }), avatar: url } } : m));
     return url;
   };
+
+  // Conversations to list in the sidebar: the saved ones, plus any chat you just opened.
+  const dmList = useMemo(() => {
+    const seen = new Set(state.threads.map((t) => dmKey(t.with)));
+    const fresh = Object.entries(state.dms)
+      .filter(([k]) => !seen.has(k))
+      .map(([, d]) => ({ with: d.with, last: '', ts: 0, unread: 0 }));
+    return [...fresh, ...state.threads];
+  }, [state.threads, state.dms]);
 
   if (booting) return <Splash />;
   if (status === 'idle' || state.nick === '') {
@@ -160,7 +193,9 @@ export default function App() {
   }
 
   const active = state.active;
-  const room = active ? state.rooms[active] : null;
+  const room = active && !isDmKey(active) ? state.rooms[active] : null;
+  const dm = isDmKey(active) ? state.dms[active] : null;
+  const myRank = room ? roleRank(room.roles[state.nick]) : 0;
   const disconnected = status === 'closed' || status === 'error';
   const ann = state.announcement;
 
@@ -168,8 +203,8 @@ export default function App() {
     <div className="app">
       {disconnected && (
         <div className="disconnect-banner" role="alert">
-          <span>⚠ Lost connection to the server.</span>
-          <button onClick={() => chat.connect(state.account ?? state.nick, token)}>Reconnect</button>
+          <span>⚠ Lost connection. Trying to reconnect…</span>
+          <button onClick={chat.reconnect}>Reconnect now</button>
         </div>
       )}
       {ann && (
@@ -223,7 +258,36 @@ export default function App() {
                 onClick={() => chat.setActive(name)}
               >
                 <span className="buffer-name">{roomLabel(name)}</span>
-                {r && r.unread > 0 && <span className="badge">{r.unread}</span>}
+                {r && r.mentions > 0 ? (
+                  <span className="badge mention" title="You were mentioned">@{r.mentions}</span>
+                ) : (
+                  r && r.unread > 0 && <span className="badge">{r.unread}</span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="nav-label-row">
+          <span className="nav-label">Private messages</span>
+          <button className="mini-plus" onClick={() => setShowNewDm(true)} title="New private message" aria-label="New private message">
+            +
+          </button>
+        </div>
+        <nav className="buffers">
+          {dmList.length === 0 && <p className="buffers-empty">No private messages yet.</p>}
+          {dmList.map((t) => {
+            const key = dmKey(t.with);
+            return (
+              <button
+                key={key}
+                className={`buffer dm ${active === key ? 'active' : ''}`}
+                onClick={() => chat.setActive(key)}
+                title={t.last || undefined}
+              >
+                <Avatar name={t.with} src={avatarFor(t.with)} size={22} />
+                <span className="buffer-name">{t.with}</span>
+                {t.unread > 0 && <span className="badge">{t.unread}</span>}
               </button>
             );
           })}
@@ -237,6 +301,11 @@ export default function App() {
               <div className="chan-title">
                 <span className="chan-name">{roomLabel(room.name)}</span>
                 <span className="chan-meta">{room.members.length} online</span>
+                {room.topic && (
+                  <span className="chan-topic" title={`Topic set by ${room.topic.by}`}>
+                    {room.topic.text}
+                  </span>
+                )}
               </div>
               <div className="chan-actions">
                 <button className="leave" onClick={() => chat.leave(room.name)}>Leave</button>
@@ -250,16 +319,67 @@ export default function App() {
               onControlRoom={(op, pos) => chat.mediaControl(room.name, op, pos)}
             />
             <div className="content">
-              <RoomChat
+              <Conversation
+                key={room.name}
                 events={room.events}
-                draft={draft}
-                setDraft={setDraft}
+                more={room.more}
+                loadingMore={room.loadingMore}
+                onLoadEarlier={() => chat.loadEarlier(room.name)}
+                typing={room.typing}
+                me={state.nick}
+                avatarFor={avatarFor}
+                placeholder={`Message ${roomLabel(room.name)}`}
+                commandRank={myRank}
                 onSend={(text) => chat.say(room.name, text)}
-                onPlaySound={(id) => chat.playSound(room.name, id)}
+                onTyping={() => chat.typing(room.name)}
+                tools={<SoundPicker onPlay={(id) => chat.playSound(room.name, id)} />}
+                canModerate={myRank >= 2}
+                onEdit={(id, text) => chat.editMessage(room.name, id, text)}
+                onDelete={(id) => chat.deleteMessage(room.name, id)}
+                onProfile={openMember}
+                onClear={() => chat.clearRoom(room.name)}
               />
               <aside className="right-rail">
-                <MembersPanel members={room.members} onPick={openMember} />
+                <MembersPanel
+                  members={room.members}
+                  roles={room.roles}
+                  away={room.away}
+                  avatarFor={avatarFor}
+                  onPick={openMember}
+                />
               </aside>
+            </div>
+          </>
+        ) : dm ? (
+          <>
+            <header className="chan-head">
+              <div className="chan-title">
+                <button className="dm-head" onClick={() => openMember(dm.with)} title="View profile">
+                  <Avatar name={dm.with} src={avatarFor(dm.with)} size={34} />
+                  <span className="chan-name">{dm.with}</span>
+                </button>
+                <span className="chan-meta">private chat</span>
+              </div>
+            </header>
+            <div className="content">
+              <Conversation
+                key={active ?? ''}
+                events={dm.events}
+                more={dm.more}
+                loadingMore={dm.loadingMore}
+                onLoadEarlier={() => chat.loadEarlier(active!)}
+                typing={{ [dm.with]: dm.typingUntil }}
+                me={state.nick}
+                avatarFor={avatarFor}
+                placeholder={`Message ${dm.with}`}
+                commandRank={null}
+                onSend={(text) => chat.sendDm(dm.with, text)}
+                onTyping={() => chat.typing(active!)}
+                canModerate={false}
+                onEdit={() => undefined}
+                onDelete={() => undefined}
+                onProfile={openMember}
+              />
             </div>
           </>
         ) : (
@@ -285,6 +405,15 @@ export default function App() {
           onClose={() => setModal(null)}
           onSave={modal.editable ? onSaveProfile : undefined}
           onUploadAvatar={modal.editable ? onUploadAvatar : undefined}
+          onMessage={
+            modal.editable
+              ? undefined
+              : () => {
+                  chat.openDm(modal.account);
+                  setModal(null);
+                }
+          }
+          canMessage={modal.allowPm}
         />
       )}
       {showRooms && (
@@ -297,6 +426,7 @@ export default function App() {
           onClose={() => setShowRooms(false)}
         />
       )}
+      {showNewDm && <NewMessageModal me={state.nick} onStart={chat.openDm} onClose={() => setShowNewDm(false)} />}
       {toast && <div className="toast" role="status">{toast}</div>}
       {showPrefs && token && (
         <PreferencesModal
@@ -309,18 +439,44 @@ export default function App() {
   );
 }
 
-function MembersPanel({ members, onPick }: { members: string[]; onPick: (nick: string) => void }) {
-  const sorted = useMemo(() => [...members].sort((a, b) => a.localeCompare(b)), [members]);
+function MembersPanel({
+  members,
+  roles,
+  away,
+  avatarFor,
+  onPick,
+}: {
+  members: string[];
+  roles: Record<string, RoomRole>;
+  away: string[];
+  avatarFor: (name: string) => string | undefined;
+  onPick: (nick: string) => void;
+}) {
+  // Staff first, then everyone else, each group alphabetical.
+  const sorted = useMemo(
+    () => [...members].sort((a, b) => roleRank(roles[b]) - roleRank(roles[a]) || a.localeCompare(b)),
+    [members, roles],
+  );
+  const awaySet = new Set(away);
   return (
     <div className="members-panel">
       <div className="rail-head">Members · {members.length}</div>
       <ul className="member-list">
-        {sorted.map((m) => (
-          <li key={m} className="member-item" title="View profile" onClick={() => onPick(m)}>
-            <Avatar name={m} size={26} />
-            <span className="member-name">{m}</span>
-          </li>
-        ))}
+        {sorted.map((m) => {
+          const r = roles[m];
+          return (
+            <li
+              key={m}
+              className={`member-item ${awaySet.has(m) ? 'away' : ''}`}
+              title={r ? `${ROLE_NAME[r]}${awaySet.has(m) ? ', away' : ''}` : awaySet.has(m) ? 'Away' : 'View profile'}
+              onClick={() => onPick(m)}
+            >
+              <Avatar name={m} src={avatarFor(m)} size={26} />
+              <span className="member-name">{m}</span>
+              {r && <span className="role-icon" aria-label={ROLE_NAME[r]}>{ROLE_ICON[r]}</span>}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );
@@ -333,68 +489,6 @@ function Splash() {
         <LogoMark size={72} />
         <p className="tagline">Reconnecting…</p>
       </div>
-    </div>
-  );
-}
-
-function RoomChat({
-  events,
-  draft,
-  setDraft,
-  onSend,
-  onPlaySound,
-}: {
-  events: ChatEvent[];
-  draft: string;
-  setDraft: React.Dispatch<React.SetStateAction<string>>;
-  onSend: (text: string) => void;
-  onPlaySound: (id: string) => void;
-}) {
-  const scrollerRef = useRef<HTMLDivElement | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
-
-  useEffect(() => {
-    const el = scrollerRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [events.length]);
-
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const text = draft.trim();
-    if (!text) return;
-    onSend(text);
-    setDraft('');
-  };
-
-  return (
-    <div className="chat">
-      <div className="messages" ref={scrollerRef}>
-        {events.map((ev, i) => {
-          const prev = events[i - 1];
-          const grouped =
-            ev.kind === 'message' &&
-            prev?.kind === 'message' &&
-            prev.from === ev.from &&
-            ev.ts - prev.ts < 5 * 60 * 1000;
-          return <Message key={ev.id} event={ev} grouped={grouped} />;
-        })}
-      </div>
-      <form className="composer" onSubmit={submit}>
-        <SoundPicker onPlay={onPlaySound} />
-        <EmojiPicker
-          onPick={(emoji) => {
-            setDraft((d) => d + emoji);
-            inputRef.current?.focus();
-          }}
-        />
-        <input
-          ref={inputRef}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder="Message the room…"
-        />
-        <button type="submit">Send</button>
-      </form>
     </div>
   );
 }

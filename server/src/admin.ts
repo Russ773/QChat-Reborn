@@ -13,6 +13,7 @@ import {
 } from './accounts.js';
 import { removeAvatars } from './avatars.js';
 import type { ChatServer } from './chat/server.js';
+import { purgeAccount } from './chat/store.js';
 import { db } from './db.js';
 import { bearer, readBody, send } from './httpUtil.js';
 import { getSettings, saveSettings } from './settings.js';
@@ -173,6 +174,7 @@ export async function handleAdmin(
       if (targetRole === 'admin') return deny(res, 'Remove their admin role before deleting the account.');
       chat.kickAccount(target, 'Your account has been deleted.');
       removeAvatars(target);
+      purgeAccount(target);
       deleteAccount(target);
       audit(me, 'delete-member', target);
       send(res, 200, { ok: true });

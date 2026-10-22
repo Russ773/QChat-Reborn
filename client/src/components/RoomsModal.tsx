@@ -90,8 +90,9 @@ export function RoomsModal({ rooms, joined, onRefresh, onJoin, onOpen, onClose }
                     <span className="room-count">{r.members} here</span>
                     {r.media && <span className="room-tag playing">▶ playing</span>}
                     {isJoined && <span className="room-tag joined">joined</span>}
-                    {!r.permanent && <span className="room-tag">user room</span>}
+                    {!r.permanent && <span className="room-tag">{r.owner ? `by ${r.owner}` : 'user room'}</span>}
                   </span>
+                  {r.topic && <span className="room-topic">{r.topic}</span>}
                 </div>
                 <button className={isJoined ? 'secondary' : ''} onClick={() => go(r)}>
                   {isJoined ? 'Open' : 'Join'}
@@ -116,7 +117,10 @@ export function RoomsModal({ rooms, joined, onRefresh, onJoin, onOpen, onClose }
             <button type="submit">Create</button>
           </div>
           {error && <p className="pm-error">{error}</p>}
-          <p className="rooms-hint">Rooms you make disappear once everyone has left.</p>
+          <p className="rooms-hint">
+            You own the rooms you create and can make moderators. They stay until you delete them (type
+            /deleteroom) or nobody uses them for 30 days.
+          </p>
         </form>
       </div>
     </div>

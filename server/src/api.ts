@@ -76,7 +76,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, chat:
   if (path === '/api/profile' && method === 'GET') {
     const a = (new URLSearchParams(query).get('a') ?? '').trim();
     if (!validAccount(a)) send(res, 404, { error: 'No such user.' });
-    else send(res, 200, { profile: publicProfile(a) });
+    else send(res, 200, { profile: publicProfile(a), allowPm: getPrefs(a).allowPm });
     return true;
   }
 

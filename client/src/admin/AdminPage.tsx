@@ -376,7 +376,11 @@ function Rooms({ token, me, notify, ask }: TabProps) {
                 {roomLabel(r.name)}
                 <span className={`pill ${r.permanent ? '' : 'user'}`}>{r.permanent ? 'built in' : 'user room'}</span>
               </div>
-              <div className="rc-count">{r.members.length} here · {r.lines} recent messages</div>
+              <div className="rc-count">
+                {r.members.length} here · {r.lines} saved messages
+                {r.owner ? ` · owner ${r.owner}` : ''}
+              </div>
+              {r.topic && <div className="rc-topic">{r.topic}</div>}
             </div>
 
             {r.members.length === 0 ? (
@@ -439,8 +443,8 @@ function Rooms({ token, me, notify, ask }: TabProps) {
                   ask({
                     title: `Close ${roomLabel(r.name)}?`,
                     message: r.permanent
-                      ? 'Everyone is removed and the recent messages are cleared. The room itself stays.'
-                      : 'Everyone is removed and the room is deleted.',
+                      ? 'Everyone is removed and all of its saved messages are deleted. The room itself stays.'
+                      : 'Everyone is removed and the room is deleted along with its saved messages.',
                     confirmLabel: 'Close room',
                     danger: true,
                     run: async () => {

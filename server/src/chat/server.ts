@@ -1,6 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import type { WebSocket } from 'ws';
 import {
+  COMMANDS,
+  HISTORY_PAGE,
+  MAX_MESSAGE,
+  MAX_TOPIC,
   decodeMsg,
   encodeMsg,
   normalizeRoom,
@@ -11,8 +15,10 @@ import {
   type ClientMsg,
   type MediaState,
   type RoomInfo,
+  type RoomRole,
   type ServerMsg,
 } from '@qchat/shared';
+import * as store from './store.js';
 
 interface Conn {
   id: string;
@@ -20,6 +26,12 @@ interface Conn {
   nick: string;
   account: string | null;
   rooms: Set<string>;
+  /** Away message, or null when present. */
+  away: string | null;
+  alive: boolean;
+  lastTyping: number;
+  /** Recent send times, for flood control. */
+  stamps: number[];
 }
 
 /** What the chat engine needs to know from the rest of the app. */
@@ -31,42 +43,97 @@ export interface ChatPolicy {
   /** While true, only administrators may be connected. */
   maintenance: () => boolean;
   isAdmin: (account: string) => boolean;
+  /** Find a member by name (any case): the proper spelling and when they joined. */
+  lookup: (name: string) => { account: string; createdAt: number } | null;
+  /** Whether a member accepts private messages. */
+  allowsPm: (account: string) => boolean;
 }
 
 const DEFAULT_ROOMS = ['#lobby', '#general', '#help'];
-const HISTORY_LIMIT = 50;
-const MAX_TEXT = 2000;
-/** Cap on rooms in existence, so nobody can fill memory by spamming creates. */
-const MAX_ROOMS = 200;
+/** Cap on rooms in existence, so nobody can fill the database by spamming creates. */
+const MAX_ROOMS = 300;
+const MAX_CONNS_PER_ACCOUNT = 8;
+/** At most this many messages in this many milliseconds (admins are exempt). */
+const FLOOD_COUNT = 6;
+const FLOOD_WINDOW = 8000;
+const DAY = 24 * 3600 * 1000;
+/** User rooms nobody has touched for this long are deleted. */
+const ROOM_EXPIRY = 30 * DAY;
+const KEEP_MESSAGES = 5000;
+
+/** Newlines and tabs become a space; other control characters are dropped. */
+const sanitize = (text: string) =>
+  text
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/[\u0000-\u001f\u007f]/g, '')
+    .trim()
+    .slice(0, MAX_MESSAGE);
+const label = (room: string) => room.replace(/^#/, '');
 
 /**
- * The native real-time chat engine. Holds live connections, room membership
- * and a short in-memory history per room (durable DB history is a later phase).
- * No IRC: the browser speaks the JSON protocol in @qchat/shared directly.
+ * The native real-time chat engine: live connections, rooms (saved in the
+ * database, with owners, moderators, topics and saved history), private
+ * messages, slash commands, and the admin controls.
  */
 export class ChatServer {
   private conns = new Map<string, Conn>();
-  private rooms = new Map<string, Set<string>>(); // room -> connection ids
-  private history = new Map<string, ChatLine[]>(); // room -> recent lines
+  /** Live membership: room -> connection ids. Rooms themselves live in the database. */
+  private live = new Map<string, Set<string>>();
   private media = new Map<string, MediaState>(); // room -> current synced media
+  private blocks = new Map<string, Set<string>>(); // account (lower) -> blocked (lower)
 
   constructor(
     private log: (msg: string) => void,
     private policy: ChatPolicy,
   ) {
-    for (const r of DEFAULT_ROOMS) {
-      this.rooms.set(r, new Set());
-    }
+    store.ensureBuiltInRooms(DEFAULT_ROOMS);
+
+    // Drop dead connections.
+    setInterval(() => {
+      for (const c of this.conns.values()) {
+        if (!c.alive) {
+          c.ws.terminate();
+          continue;
+        }
+        c.alive = false;
+        try {
+          c.ws.ping();
+        } catch {
+          /* closing */
+        }
+      }
+    }, 30000).unref();
+
+    // Tidy up old rooms and messages now and then.
+    const tidy = () => {
+      const gone = store.expireRooms(Date.now() - ROOM_EXPIRY, (n) => (this.live.get(n)?.size ?? 0) > 0);
+      for (const n of gone) this.log(`room expired (unused for 30 days): ${n}`);
+      store.trimMessages(KEEP_MESSAGES);
+    };
+    tidy();
+    setInterval(tidy, 3600 * 1000).unref();
   }
 
   accept(ws: WebSocket): void {
-    const conn: Conn = { id: randomUUID(), ws, nick: '', account: null, rooms: new Set() };
+    const conn: Conn = {
+      id: randomUUID(),
+      ws,
+      nick: '',
+      account: null,
+      rooms: new Set(),
+      away: null,
+      alive: true,
+      lastTyping: 0,
+      stamps: [],
+    };
     this.conns.set(conn.id, conn);
 
     ws.on('message', (data) => {
+      conn.alive = true;
       const msg = decodeMsg<ClientMsg>(typeof data === 'string' ? data : data.toString());
       if (msg) this.handle(conn, msg);
     });
+    ws.on('pong', () => (conn.alive = true));
     ws.on('close', () => this.disconnect(conn));
     ws.on('error', () => this.disconnect(conn));
   }
@@ -74,17 +141,37 @@ export class ChatServer {
   // --- Dispatch -------------------------------------------------------------
 
   private handle(conn: Conn, msg: ClientMsg): void {
+    if (msg.t === 'ping') return this.send(conn, { t: 'pong' });
+    if (msg.t === 'hello') return this.onHello(conn, msg.token);
+    if (!conn.account) return this.send(conn, { t: 'error', text: 'Please log in to chat.' });
+
     switch (msg.t) {
-      case 'hello':
-        return this.onHello(conn, msg.nick, msg.token);
       case 'join':
-        return this.onJoin(conn, msg.room);
+        return this.onJoin(conn, msg.room, msg.restore === true);
       case 'leave':
         return this.onLeave(conn, msg.room, 'left');
       case 'say':
-        return this.onSay(conn, msg.room, msg.text);
+        return this.onSay(conn, msg.room, String(msg.text ?? ''));
       case 'nick':
-        return this.onNick(conn);
+        return this.send(conn, { t: 'error', text: 'Your chat name is your account name.' });
+      case 'history':
+        return this.onHistory(conn, msg.room, Number(msg.before));
+      case 'typing':
+        return this.onTyping(conn, msg.room);
+      case 'edit':
+        return this.onEdit(conn, msg.room, String(msg.id ?? ''), String(msg.text ?? ''));
+      case 'delete':
+        return this.onDelete(conn, msg.room, String(msg.id ?? ''));
+      case 'dm':
+        return this.onDm(conn, String(msg.to ?? ''), String(msg.text ?? ''));
+      case 'dmHistory':
+        return this.onDmHistory(conn, String(msg.with ?? ''), msg.before ? Number(msg.before) : undefined);
+      case 'dmRead':
+        return this.onDmRead(conn, String(msg.with ?? ''));
+      case 'dmTyping':
+        return this.onDmTyping(conn, String(msg.to ?? ''));
+      case 'listDms':
+        return this.sendThreads(conn.account);
       case 'playYouTube':
         return this.onPlayYouTube(conn, msg.room, msg.ref, msg.title);
       case 'mediaControl':
@@ -93,44 +180,57 @@ export class ChatServer {
         return this.onPlaySound(conn, msg.room, msg.sound);
       case 'listRooms':
         return this.send(conn, { t: 'rooms', rooms: this.roomInfos() });
-      case 'ping':
-        return this.send(conn, { t: 'pong' });
     }
   }
 
-  private onHello(conn: Conn, _desired: string, token?: string): void {
+  private onHello(conn: Conn, token?: string): void {
     // Chatting needs an account: no valid session token, no connection.
     const account = token ? this.policy.resolve(token) : null;
     if (!account) return this.reject(conn, 'Please log in to chat.');
     if (this.policy.maintenance() && !this.policy.isAdmin(account)) {
       return this.reject(conn, 'QChat is down for maintenance. Please try again soon.');
     }
+    if (this.connsOf(account).length >= MAX_CONNS_PER_ACCOUNT) {
+      return this.reject(conn, 'You have too many QChat windows open. Close one and try again.');
+    }
     conn.account = account;
     conn.nick = account;
-    this.send(conn, {
-      t: 'welcome',
-      you: { id: conn.id, nick: conn.nick, account: conn.account },
-    });
+    this.send(conn, { t: 'welcome', you: { id: conn.id, nick: conn.nick, account } });
+    this.sendThreads(account, conn);
   }
 
-  private onJoin(conn: Conn, roomName: string): void {
-    if (!conn.nick) return this.send(conn, { t: 'error', text: 'Say hello first.' });
+  // --- Rooms ------------------------------------------------------------------
+
+  private onJoin(conn: Conn, roomName: string, restore = false): void {
+    const account = conn.account!;
     const room = normalizeRoom(roomName);
     if (!validRoom(room)) {
+      if (restore) return;
       return this.send(conn, {
         t: 'error',
         text: 'Room names can use letters, numbers, - and _ (up to 30 characters).',
       });
     }
+    const isAdmin = this.policy.isAdmin(account);
+    if (!isAdmin && store.isBanned(room, account.toLowerCase())) {
+      if (restore) return;
+      return this.send(conn, { t: 'error', text: `You are banned from ${label(room)}.` });
+    }
 
-    let members = this.rooms.get(room);
-    if (!members) {
-      if (this.rooms.size >= MAX_ROOMS) {
+    let row = store.getRoom(room);
+    if (!row && restore) return; // a remembered room that no longer exists is not re-created
+    if (!row) {
+      if (store.roomCount() >= MAX_ROOMS) {
         return this.send(conn, { t: 'error', text: 'There are too many rooms right now. Try joining an existing one.' });
       }
-      members = new Set();
-      this.rooms.set(room, members);
+      row = store.createRoom(room, account);
       this.log(`room created: ${room} by ${conn.nick}`);
+    }
+
+    let members = this.live.get(room);
+    if (!members) {
+      members = new Set();
+      this.live.set(room, members);
     }
     const joinedNow = !members.has(conn.id);
     if (joinedNow) {
@@ -138,27 +238,491 @@ export class ChatServer {
       conn.rooms.add(room);
       this.broadcast(room, { t: 'joinNotice', room, nick: conn.nick }, conn.id);
     }
+    store.touchRoom(room);
 
+    const page = store.getMessages(room, undefined, HISTORY_PAGE);
     this.send(conn, {
       t: 'joined',
       room,
       members: this.memberNicks(room),
-      history: this.history.get(room) ?? [],
+      history: this.unblocked(page.lines, account),
+      more: page.more,
+      topic: store.topicOf(store.getRoom(room)),
+      roles: this.roleMap(room),
+      away: this.awayNicks(room),
     });
-    this.broadcast(room, { t: 'presence', room, members: this.memberNicks(room) });
+    this.broadcastPresence(room);
     const media = this.media.get(room);
     if (media) this.send(conn, { t: 'media', room, state: media });
     const welcome = this.policy.welcome();
     if (welcome && joinedNow) this.send(conn, { t: 'system', room, text: welcome });
   }
 
-  private inRoom(conn: Conn, room: string): boolean {
-    return this.rooms.get(room)?.has(conn.id) ?? false;
+  private onLeave(conn: Conn, roomName: string, reason: string): void {
+    const room = normalizeRoom(roomName);
+    const members = this.live.get(room);
+    if (!members || !members.has(conn.id)) return;
+    members.delete(conn.id);
+    conn.rooms.delete(room);
+    this.send(conn, { t: 'left', room });
+    this.broadcast(room, { t: 'leaveNotice', room, nick: conn.nick, reason });
+    this.broadcastPresence(room);
   }
+
+  private disconnect(conn: Conn): void {
+    if (!this.conns.has(conn.id)) return;
+    this.conns.delete(conn.id);
+    for (const room of conn.rooms) {
+      this.live.get(room)?.delete(conn.id);
+      this.broadcast(room, { t: 'leaveNotice', room, nick: conn.nick, reason: 'disconnected' });
+      this.broadcastPresence(room);
+    }
+  }
+
+  private inRoom(conn: Conn, room: string): boolean {
+    return this.live.get(room)?.has(conn.id) ?? false;
+  }
+
+  // --- Messages ---------------------------------------------------------------
+
+  private onSay(conn: Conn, roomName: string, text: string): void {
+    const room = normalizeRoom(roomName);
+    if (!this.inRoom(conn, room)) return this.send(conn, { t: 'error', text: 'You are not in that room.' });
+    // "/something" is a command; "//something" is a message that starts with a slash.
+    if (text.startsWith('/') && !text.startsWith('//')) return this.runCommand(conn, room, text);
+    this.postMessage(conn, room, text.startsWith('//') ? text.slice(1) : text, undefined);
+  }
+
+  private postMessage(conn: Conn, room: string, text: string, kind: 'action' | undefined): void {
+    if (this.isMuted(conn, room)) return;
+    if (this.tooFast(conn)) return;
+    const clean = sanitize(text);
+    if (!clean) return;
+    const line = store.addMessage(room, conn.nick, kind, clean);
+    store.touchRoom(room);
+    const sender = conn.nick.toLowerCase();
+    for (const id of this.live.get(room) ?? []) {
+      const c = this.conns.get(id);
+      if (!c || !c.account) continue;
+      if (this.blocksFor(c.account.toLowerCase()).has(sender)) continue; // they blocked the sender
+      this.send(c, { t: 'message', room, line });
+    }
+  }
+
+  private onHistory(conn: Conn, roomName: string, before: number): void {
+    const room = normalizeRoom(roomName);
+    if (!this.inRoom(conn, room) || !Number.isFinite(before) || before <= 0) return;
+    const page = store.getMessages(room, before, HISTORY_PAGE);
+    this.send(conn, { t: 'history', room, lines: this.unblocked(page.lines, conn.account!), more: page.more });
+  }
+
+  private onTyping(conn: Conn, roomName: string): void {
+    const room = normalizeRoom(roomName);
+    const now = Date.now();
+    if (!this.inRoom(conn, room) || now - conn.lastTyping < 1500) return;
+    if (store.activeMute(room, conn.account!.toLowerCase())) return;
+    conn.lastTyping = now;
+    this.broadcast(room, { t: 'typing', room, nick: conn.nick }, conn.id);
+  }
+
+  private onEdit(conn: Conn, roomName: string, id: string, text: string): void {
+    const room = normalizeRoom(roomName);
+    if (!this.inRoom(conn, room)) return;
+    const msg = store.getMessage(room, id);
+    if (!msg || msg.deleted) return this.send(conn, { t: 'error', text: 'That message no longer exists.' });
+    if (msg.fromLower !== conn.account!.toLowerCase() || msg.kind === 'action') {
+      return this.send(conn, { t: 'error', text: 'You can only edit your own messages.' });
+    }
+    if (this.isMuted(conn, room) || this.tooFast(conn)) return;
+    const clean = sanitize(text);
+    if (!clean) return;
+    const edited = store.editMessage(id, clean);
+    this.broadcast(room, { t: 'edited', room, id, text: clean, edited });
+  }
+
+  private onDelete(conn: Conn, roomName: string, id: string): void {
+    const room = normalizeRoom(roomName);
+    if (!this.inRoom(conn, room)) return;
+    const msg = store.getMessage(room, id);
+    if (!msg || msg.deleted) return;
+    const mine = msg.fromLower === conn.account!.toLowerCase();
+    if (!mine && this.rank(room, conn.account!) < 2) {
+      return this.send(conn, { t: 'error', text: 'You can only delete your own messages.' });
+    }
+    store.deleteMessage(id, conn.nick);
+    this.broadcast(room, { t: 'deleted', room, id });
+  }
+
+  // --- Private messages ---------------------------------------------------------
+
+  private onDm(conn: Conn, toRaw: string, text: string, kind?: 'action'): void {
+    const me = conn.account!;
+    const target = this.policy.lookup(toRaw.trim());
+    if (!target) return this.send(conn, { t: 'error', text: `There is no member called "${toRaw.trim()}".` });
+    if (target.account.toLowerCase() === me.toLowerCase()) {
+      return this.send(conn, { t: 'error', text: 'You cannot message yourself.' });
+    }
+    if (this.blocksFor(me.toLowerCase()).has(target.account.toLowerCase())) {
+      return this.send(conn, { t: 'error', text: `You have blocked ${target.account}. Use /unblock ${target.account} first.` });
+    }
+    if (this.blocksFor(target.account.toLowerCase()).has(me.toLowerCase())) {
+      return this.send(conn, { t: 'error', text: `${target.account} is not accepting messages from you.` });
+    }
+    if (!this.policy.allowsPm(target.account)) {
+      return this.send(conn, { t: 'error', text: `${target.account} is not accepting private messages.` });
+    }
+    // In a private chat only /me works; "//" sends a leading slash.
+    let body = text.trim();
+    if (!kind && /^\/me(\s|$)/i.test(body)) {
+      kind = 'action';
+      body = body.slice(3).trim();
+    } else if (body.startsWith('//')) {
+      body = body.slice(1);
+    } else if (body.startsWith('/')) {
+      return this.send(conn, { t: 'error', text: 'Commands only work inside a room. Only /me works in private messages.' });
+    }
+    if (this.tooFast(conn)) return;
+    const clean = sanitize(body);
+    if (!clean) return;
+
+    const msg = store.addDm(me, target.account, kind, clean);
+    for (const c of [...this.connsOf(me), ...this.connsOf(target.account)]) this.send(c, { t: 'dm', msg });
+
+    const theirs = this.connsOf(target.account);
+    if (theirs.length > 0 && theirs.every((c) => c.away !== null)) {
+      const why = theirs[0].away ? `: ${theirs[0].away}` : '';
+      this.send(conn, { t: 'dmNotice', with: target.account, text: `${target.account} is away${why}` });
+    }
+  }
+
+  private onDmHistory(conn: Conn, withRaw: string, before?: number): void {
+    const partner = this.policy.lookup(withRaw.trim());
+    if (!partner) return;
+    const page = store.getDms(conn.account!, partner.account, before, HISTORY_PAGE);
+    this.send(conn, { t: 'dmHistory', with: partner.account, lines: page.lines, more: page.more });
+  }
+
+  private onDmRead(conn: Conn, withRaw: string): void {
+    const partner = this.policy.lookup(withRaw.trim());
+    if (!partner) return;
+    store.markDmsRead(conn.account!, partner.account);
+    this.sendThreads(conn.account!);
+  }
+
+  private onDmTyping(conn: Conn, toRaw: string): void {
+    const now = Date.now();
+    if (now - conn.lastTyping < 1500) return;
+    const target = this.policy.lookup(toRaw.trim());
+    if (!target || this.blocksFor(target.account.toLowerCase()).has(conn.account!.toLowerCase())) return;
+    conn.lastTyping = now;
+    for (const c of this.connsOf(target.account)) this.send(c, { t: 'dmTyping', from: conn.nick });
+  }
+
+  /** Send an account's conversation list to one connection, or all of its connections. */
+  private sendThreads(account: string, only?: Conn): void {
+    const msg: ServerMsg = { t: 'dms', threads: store.dmThreads(account) };
+    if (only) this.send(only, msg);
+    else for (const c of this.connsOf(account)) this.send(c, msg);
+  }
+
+  // --- Slash commands --------------------------------------------------------------
+
+  private runCommand(conn: Conn, room: string, raw: string): void {
+    const m = raw.slice(1).match(/^(\S*)\s*([\s\S]*)$/);
+    const cmd = (m?.[1] ?? '').toLowerCase();
+    const args = (m?.[2] ?? '').trim();
+    const me = conn.account!;
+    const note = (text: string) => this.send(conn, { t: 'system', room, text });
+    const fail = (text: string) => this.send(conn, { t: 'error', text });
+
+    switch (cmd) {
+      case 'help':
+      case '?': {
+        const rank = this.rank(room, me);
+        note('You can use these commands:');
+        for (const c of COMMANDS) {
+          if (c.level === 'owner' && rank < 3) continue;
+          if (c.level === 'mod' && rank < 2) continue;
+          note(`${c.usage}  ·  ${c.desc}`);
+        }
+        return;
+      }
+
+      case 'clear':
+        return; // handled on your screen only
+
+      case 'me': {
+        if (!args) return fail('Say what you are doing, like "/me waves".');
+        return this.postMessage(conn, room, args, 'action');
+      }
+
+      case 'msg':
+      case 'w':
+      case 'dm':
+      case 'pm': {
+        const sp = args.match(/^(\S+)\s+([\s\S]+)$/);
+        if (!sp) return fail('Use /msg <member> <text>.');
+        return this.onDm(conn, sp[1], sp[2]);
+      }
+
+      case 'topic': {
+        const row = store.getRoom(room);
+        if (!args) {
+          const t = store.topicOf(row);
+          return note(t ? `Topic: ${t.text}  (set by ${t.by})` : 'There is no topic set.');
+        }
+        if (this.rank(room, me) < 2) return fail('Only moderators can change the topic.');
+        const clear = args.toLowerCase() === 'clear' || args === '-';
+        const text = clear ? null : sanitize(args).slice(0, MAX_TOPIC);
+        store.setTopic(room, text, conn.nick);
+        this.broadcast(room, { t: 'topic', room, topic: store.topicOf(store.getRoom(room)) });
+        this.broadcast(room, {
+          t: 'system',
+          room,
+          text: text ? `${conn.nick} set the topic: ${text}` : `${conn.nick} cleared the topic`,
+        });
+        return;
+      }
+
+      case 'whois': {
+        const t = this.policy.lookup(args.split(/\s+/)[0] ?? '');
+        if (!args || !t) return fail(args ? `There is no member called "${args}".` : 'Use /whois <member>.');
+        const theirs = this.connsOf(t.account);
+        const rooms = new Set<string>();
+        for (const c of theirs) for (const r of c.rooms) rooms.add(label(r));
+        const away = theirs.length > 0 && theirs.every((c) => c.away !== null) ? theirs[0].away || 'away' : null;
+        note(`${t.account} is ${theirs.length ? (away !== null ? `away (${away})` : 'online') : 'offline'}`);
+        note(`Member since ${new Date(t.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}`);
+        if (rooms.size) note(`In: ${[...rooms].join(', ')}`);
+        const role = this.roleOf(room, t.account);
+        if (role) note(`Role in ${label(room)}: ${role}`);
+        return;
+      }
+
+      case 'away': {
+        const msg = sanitize(args).slice(0, 100);
+        for (const c of this.connsOf(me)) c.away = msg || 'away';
+        this.refreshPresenceFor(me);
+        return note(msg ? `You are away: ${msg}` : 'You are marked as away. Use /back when you return.');
+      }
+      case 'back': {
+        for (const c of this.connsOf(me)) c.away = null;
+        this.refreshPresenceFor(me);
+        return note('Welcome back.');
+      }
+
+      case 'block': {
+        const t = this.policy.lookup(args.split(/\s+/)[0] ?? '');
+        if (!t) return fail(args ? `There is no member called "${args}".` : 'Use /block <member>.');
+        if (t.account.toLowerCase() === me.toLowerCase()) return fail('You cannot block yourself.');
+        if (this.policy.isAdmin(t.account)) return fail('You cannot block an administrator.');
+        store.addBlock(me.toLowerCase(), t.account.toLowerCase());
+        this.blocksFor(me.toLowerCase()).add(t.account.toLowerCase());
+        return note(`You blocked ${t.account}. You will not see their messages and they cannot message you.`);
+      }
+      case 'unblock': {
+        const name = args.split(/\s+/)[0] ?? '';
+        const t = this.policy.lookup(name);
+        const lower = (t?.account ?? name).toLowerCase();
+        if (!name || !store.removeBlock(me.toLowerCase(), lower)) return fail('You have not blocked them.');
+        this.blocksFor(me.toLowerCase()).delete(lower);
+        return note(`You unblocked ${t?.account ?? name}.`);
+      }
+      case 'blocks': {
+        const list = [...this.blocksFor(me.toLowerCase())];
+        return note(list.length ? `You have blocked: ${list.join(', ')}` : 'You have not blocked anyone.');
+      }
+
+      // --- Moderation ---
+      case 'kick': {
+        const [name, ...why] = args.split(/\s+/);
+        const t = this.moderationTarget(conn, room, name);
+        if (!t) return;
+        const reason = why.join(' ').slice(0, 150);
+        const nick = this.ejectFromRoom(room, t.account.toLowerCase(), `You were kicked from ${label(room)} by ${conn.nick}${reason ? `: ${reason}` : ''}.`);
+        if (!nick) return fail(`${t.account} is not in this room.`);
+        return void this.broadcast(room, { t: 'system', room, text: `${nick} was kicked by ${conn.nick}${reason ? `: ${reason}` : ''}` });
+      }
+
+      case 'ban': {
+        const [name, ...why] = args.split(/\s+/);
+        const t = this.moderationTarget(conn, room, name);
+        if (!t) return;
+        const reason = why.join(' ').slice(0, 150);
+        store.addBan(room, t.account, conn.nick, reason || null);
+        this.ejectFromRoom(room, t.account.toLowerCase(), `You were banned from ${label(room)} by ${conn.nick}${reason ? `: ${reason}` : ''}.`);
+        return void this.broadcast(room, { t: 'system', room, text: `${t.account} was banned by ${conn.nick}${reason ? `: ${reason}` : ''}` });
+      }
+      case 'unban': {
+        if (this.rank(room, me) < 2) return fail('Only moderators can do that.');
+        const t = this.policy.lookup(args.split(/\s+/)[0] ?? '');
+        const lower = (t?.account ?? args).toLowerCase();
+        if (!args || !store.removeBan(room, lower)) return fail('They are not banned from this room.');
+        return void this.broadcast(room, { t: 'system', room, text: `${t?.account ?? args} was unbanned by ${conn.nick}` });
+      }
+      case 'bans': {
+        if (this.rank(room, me) < 2) return fail('Only moderators can do that.');
+        const list = store.listBans(room);
+        return note(list.length ? `Banned from ${label(room)}: ${list.join(', ')}` : 'Nobody is banned from this room.');
+      }
+
+      case 'mute': {
+        const parts = args.split(/\s+/);
+        const t = this.moderationTarget(conn, room, parts[0]);
+        if (!t) return;
+        let minutes = 10;
+        let rest = parts.slice(1);
+        if (rest[0] !== undefined && /^\d+$/.test(rest[0])) {
+          minutes = Math.min(10080, Number(rest[0]));
+          rest = rest.slice(1);
+        }
+        const reason = rest.join(' ').slice(0, 150);
+        store.addMute(room, t.account.toLowerCase(), minutes > 0 ? Date.now() + minutes * 60000 : null, conn.nick, reason || null);
+        const span = minutes > 0 ? `for ${minutes} minute${minutes === 1 ? '' : 's'}` : 'until unmuted';
+        return void this.broadcast(room, {
+          t: 'system',
+          room,
+          text: `${t.account} was muted ${span} by ${conn.nick}${reason ? `: ${reason}` : ''}`,
+        });
+      }
+      case 'unmute': {
+        if (this.rank(room, me) < 2) return fail('Only moderators can do that.');
+        const t = this.policy.lookup(args.split(/\s+/)[0] ?? '');
+        if (!t || !store.removeMute(room, t.account.toLowerCase())) return fail('They are not muted.');
+        return void this.broadcast(room, { t: 'system', room, text: `${t.account} was unmuted by ${conn.nick}` });
+      }
+
+      case 'mod':
+      case 'unmod': {
+        if (this.rank(room, me) < 3) return fail('Only the room owner can do that.');
+        const t = this.policy.lookup(args.split(/\s+/)[0] ?? '');
+        if (!t) return fail(args ? `There is no member called "${args}".` : `Use /${cmd} <member>.`);
+        if (cmd === 'mod') {
+          store.addMod(room, t.account.toLowerCase());
+        } else {
+          store.removeMod(room, t.account.toLowerCase());
+        }
+        this.broadcastPresence(room);
+        return void this.broadcast(room, {
+          t: 'system',
+          room,
+          text: cmd === 'mod' ? `${t.account} is now a moderator (by ${conn.nick})` : `${t.account} is no longer a moderator`,
+        });
+      }
+
+      case 'deleteroom': {
+        const row = store.getRoom(room);
+        if (!row) return;
+        if (row.permanent) return fail('Built-in rooms cannot be deleted.');
+        if (this.rank(room, me) < 3) return fail('Only the room owner can delete it.');
+        this.log(`room deleted: ${room} by ${conn.nick}`);
+        this.destroyRoom(room, `${label(room)} was deleted by ${conn.nick}.`);
+        return;
+      }
+
+      default:
+        return fail(`Unknown command "/${cmd}". Type /help to see what you can do.`);
+    }
+  }
+
+  /** Resolve the target of a moderation command and check the actor may act on them. */
+  private moderationTarget(conn: Conn, room: string, name: string | undefined): { account: string } | null {
+    const me = conn.account!;
+    const fail = (text: string) => this.send(conn, { t: 'error', text });
+    const mine = this.rank(room, me);
+    if (mine < 2) {
+      fail('Only moderators can do that.');
+      return null;
+    }
+    if (!name) {
+      fail('Say who, like "/kick Jen".');
+      return null;
+    }
+    const t = this.policy.lookup(name);
+    if (!t) {
+      fail(`There is no member called "${name}".`);
+      return null;
+    }
+    if (t.account.toLowerCase() === me.toLowerCase()) {
+      fail('You cannot do that to yourself.');
+      return null;
+    }
+    if (this.rank(room, t.account) >= mine) {
+      fail(`You cannot do that to ${t.account}.`);
+      return null;
+    }
+    return t;
+  }
+
+  // --- Roles and permissions -------------------------------------------------------
+
+  /** 4 admin, 3 room owner, 2 room moderator, 0 everyone else. */
+  private rank(room: string, account: string): number {
+    if (this.policy.isAdmin(account)) return 4;
+    const lower = account.toLowerCase();
+    const row = store.getRoom(room);
+    if (row?.owner && row.owner.toLowerCase() === lower) return 3;
+    return store.isMod(room, lower) ? 2 : 0;
+  }
+
+  private roleOf(room: string, account: string): RoomRole | null {
+    const r = this.rank(room, account);
+    return r >= 4 ? 'admin' : r === 3 ? 'owner' : r === 2 ? 'mod' : null;
+  }
+
+  private roleMap(room: string): Record<string, RoomRole> {
+    const row = store.getRoom(room);
+    const mods = new Set(store.listMods(room));
+    const out: Record<string, RoomRole> = {};
+    for (const nick of this.memberNicks(room)) {
+      const l = nick.toLowerCase();
+      if (this.policy.isAdmin(nick)) out[nick] = 'admin';
+      else if (row?.owner && row.owner.toLowerCase() === l) out[nick] = 'owner';
+      else if (mods.has(l)) out[nick] = 'mod';
+    }
+    return out;
+  }
+
+  private isMuted(conn: Conn, room: string): boolean {
+    if (this.policy.isAdmin(conn.account!)) return false;
+    const m = store.activeMute(room, conn.account!.toLowerCase());
+    if (!m) return false;
+    const left = m.until ? ` for another ${Math.max(1, Math.ceil((m.until - Date.now()) / 60000))} minute(s)` : '';
+    this.send(conn, { t: 'error', text: `You are muted in ${label(room)}${left}.` });
+    return true;
+  }
+
+  private tooFast(conn: Conn): boolean {
+    if (this.policy.isAdmin(conn.account!)) return false;
+    const now = Date.now();
+    conn.stamps = conn.stamps.filter((t) => now - t < FLOOD_WINDOW);
+    if (conn.stamps.length >= FLOOD_COUNT) {
+      this.send(conn, { t: 'error', text: 'You are sending messages too quickly. Please slow down.' });
+      return true;
+    }
+    conn.stamps.push(now);
+    return false;
+  }
+
+  private blocksFor(accountLower: string): Set<string> {
+    let s = this.blocks.get(accountLower);
+    if (!s) {
+      s = store.blocksOf(accountLower);
+      this.blocks.set(accountLower, s);
+    }
+    return s;
+  }
+
+  private unblocked(lines: ChatLine[], account: string): ChatLine[] {
+    const blocked = this.blocksFor(account.toLowerCase());
+    return blocked.size ? lines.filter((l) => !blocked.has(l.from.toLowerCase())) : lines;
+  }
+
+  // --- Media ----------------------------------------------------------------------
 
   private onPlayYouTube(conn: Conn, roomName: string, ref: string, title?: string): void {
     const room = normalizeRoom(roomName);
-    if (!this.inRoom(conn, room)) return;
+    if (!this.inRoom(conn, room) || this.isMuted(conn, room)) return;
     const id = youTubeId(ref);
     if (!id) return this.send(conn, { t: 'error', text: 'That is not a valid YouTube link.' });
     const cleanTitle = title ? title.slice(0, 120) : undefined;
@@ -210,86 +774,24 @@ export class ChatServer {
 
   private onPlaySound(conn: Conn, roomName: string, sound: string): void {
     const room = normalizeRoom(roomName);
-    if (!this.inRoom(conn, room)) return;
-    if (!/^[a-z0-9_-]{1,24}$/.test(sound)) return;
+    if (!this.inRoom(conn, room) || !/^[a-z0-9_-]{1,24}$/.test(sound)) return;
+    if (this.isMuted(conn, room) || this.tooFast(conn)) return;
     this.broadcast(room, { t: 'sound', room, sound, from: conn.nick });
   }
 
-  private onLeave(conn: Conn, roomName: string, reason: string): void {
-    const room = normalizeRoom(roomName);
-    const members = this.rooms.get(room);
-    if (!members || !members.has(conn.id)) return;
-    members.delete(conn.id);
-    conn.rooms.delete(room);
-    this.send(conn, { t: 'left', room });
-    this.broadcast(room, { t: 'leaveNotice', room, nick: conn.nick, reason });
-    this.broadcast(room, { t: 'presence', room, members: this.memberNicks(room) });
-    this.pruneIfEmpty(room);
-  }
+  // --- Helpers -----------------------------------------------------------------------
 
-  private onSay(conn: Conn, roomName: string, text: string): void {
-    const room = normalizeRoom(roomName);
-    const members = this.rooms.get(room);
-    if (!members || !members.has(conn.id)) {
-      return this.send(conn, { t: 'error', text: 'You are not in that room.' });
-    }
-    const clean = text.trim().slice(0, MAX_TEXT);
-    if (!clean) return;
-
-    const line: ChatLine = { id: randomUUID(), from: conn.nick, text: clean, ts: Date.now() };
-    this.pushHistory(room, line);
-    this.broadcast(room, { t: 'message', room, line });
-  }
-
-  private onNick(conn: Conn): void {
-    // Your name in the chat is your account name; it cannot be changed here.
-    this.send(conn, { t: 'error', text: 'Your chat name is your account name.' });
-  }
-
-  private disconnect(conn: Conn): void {
-    if (!this.conns.has(conn.id)) return;
-    this.conns.delete(conn.id);
-    for (const room of conn.rooms) {
-      const members = this.rooms.get(room);
-      if (!members) continue;
-      members.delete(conn.id);
-      this.broadcast(room, { t: 'leaveNotice', room, nick: conn.nick, reason: 'disconnected' });
-      this.broadcast(room, { t: 'presence', room, members: this.memberNicks(room) });
-      this.pruneIfEmpty(room);
-    }
-  }
-
-  // --- Helpers --------------------------------------------------------------
-
-  /** User-made rooms disappear (with their history and media) once empty. */
-  private pruneIfEmpty(room: string): void {
-    if (DEFAULT_ROOMS.includes(room)) return;
-    const members = this.rooms.get(room);
-    if (members && members.size === 0) {
-      this.rooms.delete(room);
-      this.history.delete(room);
-      this.media.delete(room);
-      this.log(`room removed (empty): ${room}`);
-    }
-  }
-
-  private roomInfos(): RoomInfo[] {
-    return [...this.rooms.entries()].map(([name, members]) => ({
-      name,
-      members: members.size,
-      media: this.media.has(name),
-      permanent: DEFAULT_ROOMS.includes(name),
-    }));
+  private connsOf(account: string): Conn[] {
+    const lower = account.toLowerCase();
+    return [...this.conns.values()].filter((c) => c.account && c.account.toLowerCase() === lower);
   }
 
   private send(conn: Conn, msg: ServerMsg): void {
-    if (conn.ws.readyState === conn.ws.OPEN) {
-      conn.ws.send(encodeMsg(msg));
-    }
+    if (conn.ws.readyState === conn.ws.OPEN) conn.ws.send(encodeMsg(msg));
   }
 
   private broadcast(room: string, msg: ServerMsg, exceptId?: string): void {
-    const members = this.rooms.get(room);
+    const members = this.live.get(room);
     if (!members) return;
     const payload = encodeMsg(msg);
     for (const id of members) {
@@ -299,23 +801,84 @@ export class ChatServer {
     }
   }
 
+  private broadcastPresence(room: string): void {
+    this.broadcast(room, {
+      t: 'presence',
+      room,
+      members: this.memberNicks(room),
+      roles: this.roleMap(room),
+      away: this.awayNicks(room),
+    });
+  }
+
+  private refreshPresenceFor(account: string): void {
+    const rooms = new Set<string>();
+    for (const c of this.connsOf(account)) for (const r of c.rooms) rooms.add(r);
+    for (const r of rooms) this.broadcastPresence(r);
+  }
+
   private memberNicks(room: string): string[] {
-    const members = this.rooms.get(room);
-    if (!members) return [];
     // A unique list: the same account in two tabs is one member.
     const nicks = new Set<string>();
-    for (const id of members) {
+    for (const id of this.live.get(room) ?? []) {
       const conn = this.conns.get(id);
       if (conn) nicks.add(conn.nick);
     }
     return [...nicks].sort((a, b) => a.localeCompare(b));
   }
 
-  private pushHistory(room: string, line: ChatLine): void {
-    const lines = this.history.get(room) ?? [];
-    lines.push(line);
-    if (lines.length > HISTORY_LIMIT) lines.splice(0, lines.length - HISTORY_LIMIT);
-    this.history.set(room, lines);
+  /** Members whose every open window in the room is marked away. */
+  private awayNicks(room: string): string[] {
+    const present = new Map<string, boolean>();
+    for (const id of this.live.get(room) ?? []) {
+      const c = this.conns.get(id);
+      if (!c) continue;
+      present.set(c.nick, (present.get(c.nick) ?? true) && c.away !== null);
+    }
+    return [...present].filter(([, away]) => away).map(([n]) => n);
+  }
+
+  private roomInfos(): RoomInfo[] {
+    return store.allRooms().map((r) => ({
+      name: r.name,
+      members: this.memberNicks(r.name).length,
+      media: this.media.has(r.name),
+      permanent: r.permanent,
+      ...(r.topic ? { topic: r.topic } : {}),
+      ...(r.owner ? { owner: r.owner } : {}),
+    }));
+  }
+
+  /** Pull one account out of a room. Returns their nick, or null if they were not in it. */
+  private ejectFromRoom(room: string, accountLower: string, toast: string): string | null {
+    const members = this.live.get(room);
+    if (!members) return null;
+    let nick: string | null = null;
+    for (const id of [...members]) {
+      const c = this.conns.get(id);
+      if (!c || c.account?.toLowerCase() !== accountLower) continue;
+      nick = c.nick;
+      members.delete(id);
+      c.rooms.delete(room);
+      this.send(c, { t: 'left', room });
+      this.send(c, { t: 'error', text: toast });
+    }
+    if (nick) this.broadcastPresence(room);
+    return nick;
+  }
+
+  /** Remove everybody and delete the room with everything in it. */
+  private destroyRoom(room: string, toast: string): void {
+    for (const id of [...(this.live.get(room) ?? [])]) {
+      const c = this.conns.get(id);
+      if (!c) continue;
+      c.rooms.delete(room);
+      this.send(c, { t: 'left', room });
+      this.send(c, { t: 'error', text: toast });
+    }
+    this.live.delete(room);
+    this.media.delete(room);
+    store.deleteRoom(room);
   }
 
   /** Tell a connection why it is refused, then hang up. */
@@ -328,37 +891,35 @@ export class ChatServer {
 
   stats(): { online: number; rooms: number; videos: number } {
     return {
-      online: [...this.conns.values()].filter((c) => c.account).length,
-      rooms: this.rooms.size,
+      online: new Set([...this.conns.values()].filter((c) => c.account).map((c) => c.account!.toLowerCase())).size,
+      rooms: store.roomCount(),
       videos: this.media.size,
     };
   }
 
   onlineAccounts(): Set<string> {
-    return new Set(
-      [...this.conns.values()].filter((c) => c.account).map((c) => c.account!.toLowerCase()),
-    );
+    return new Set([...this.conns.values()].filter((c) => c.account).map((c) => c.account!.toLowerCase()));
   }
 
   adminRooms(): AdminRoom[] {
-    return [...this.rooms.keys()].map((name) => ({
-      name,
-      permanent: DEFAULT_ROOMS.includes(name),
-      members: this.memberNicks(name),
-      media: this.media.get(name) ?? null,
-      lines: (this.history.get(name) ?? []).length,
+    return store.allRooms().map((r) => ({
+      name: r.name,
+      permanent: r.permanent,
+      members: this.memberNicks(r.name),
+      media: this.media.get(r.name) ?? null,
+      lines: store.countMessages(r.name),
+      owner: r.owner,
+      topic: r.topic,
     }));
   }
 
   /** Disconnect every connection of an account. Returns how many were closed. */
   kickAccount(account: string, reason: string): number {
     let n = 0;
-    for (const c of [...this.conns.values()]) {
-      if (c.account && c.account.toLowerCase() === account.toLowerCase()) {
-        this.send(c, { t: 'error', text: reason });
-        c.ws.close();
-        n++;
-      }
+    for (const c of this.connsOf(account)) {
+      this.send(c, { t: 'error', text: reason });
+      c.ws.close();
+      n++;
     }
     return n;
   }
@@ -376,22 +937,25 @@ export class ChatServer {
     return n;
   }
 
-  /** Remove everyone from a room and clear it. User rooms are then deleted. */
+  /** Remove everyone from a room. User rooms are deleted; built-in rooms lose their saved messages. */
   closeRoom(roomName: string): boolean {
     const room = normalizeRoom(roomName);
-    const members = this.rooms.get(room);
-    if (!members) return false;
-    for (const id of [...members]) {
-      const c = this.conns.get(id);
-      members.delete(id);
-      if (!c) continue;
-      c.rooms.delete(room);
-      this.send(c, { t: 'left', room });
-      this.send(c, { t: 'error', text: `${room.replace(/^#/, '')} was closed by an administrator.` });
+    const row = store.getRoom(room);
+    if (!row) return false;
+    if (row.permanent) {
+      for (const id of [...(this.live.get(room) ?? [])]) {
+        const c = this.conns.get(id);
+        if (!c) continue;
+        c.rooms.delete(room);
+        this.send(c, { t: 'left', room });
+        this.send(c, { t: 'error', text: `${label(room)} was closed by an administrator.` });
+      }
+      this.live.delete(room);
+      this.media.delete(room);
+      store.clearRoom(room);
+    } else {
+      this.destroyRoom(room, `${label(room)} was closed by an administrator.`);
     }
-    this.history.delete(room);
-    this.media.delete(room);
-    this.pruneIfEmpty(room);
     return true;
   }
 
@@ -407,24 +971,10 @@ export class ChatServer {
   /** Remove one person from one room. Returns false if they were not there. */
   kickFromRoom(roomName: string, nick: string): boolean {
     const room = normalizeRoom(roomName);
-    const members = this.rooms.get(room);
-    if (!members) return false;
-    let found = false;
-    for (const id of [...members]) {
-      const c = this.conns.get(id);
-      if (!c || c.nick.toLowerCase() !== nick.toLowerCase()) continue;
-      found = true;
-      members.delete(id);
-      c.rooms.delete(room);
-      this.send(c, { t: 'left', room });
-      this.send(c, { t: 'error', text: `You were removed from ${room.replace(/^#/, '')} by an administrator.` });
-    }
-    if (found) {
-      this.broadcast(room, { t: 'leaveNotice', room, nick, reason: 'removed by an admin' });
-      this.broadcast(room, { t: 'presence', room, members: this.memberNicks(room) });
-      this.pruneIfEmpty(room);
-    }
-    return found;
+    const out = this.ejectFromRoom(room, nick.toLowerCase(), `You were removed from ${label(room)} by an administrator.`);
+    if (!out) return false;
+    this.broadcast(room, { t: 'leaveNotice', room, nick: out, reason: 'removed by an admin' });
+    return true;
   }
 
   /** Send an announcement to one room, or to everyone connected. */
@@ -432,7 +982,7 @@ export class ChatServer {
     const msg: ServerMsg = { t: 'announce', text, by };
     if (roomName) {
       const room = normalizeRoom(roomName);
-      const members = this.rooms.get(room);
+      const members = this.live.get(room);
       if (!members) return 0;
       this.broadcast(room, { ...msg, room });
       return members.size;

@@ -178,6 +178,16 @@ export function deleteAccount(account: string): void {
   db.prepare('DELETE FROM accounts WHERE accountLower = ?').run(lower);
 }
 
+/** Find a member by name (any case): their proper spelling and when they joined. */
+export function lookupAccount(name: string): { account: string; createdAt: number } | null {
+  const n = name.trim();
+  if (!validAccount(n)) return null;
+  const row = db.prepare('SELECT account, createdAt FROM accounts WHERE accountLower = ?').get(n.toLowerCase()) as
+    | { account: string; createdAt: number }
+    | undefined;
+  return row ?? null;
+}
+
 export function accountExists(account: string): boolean {
   return !!db.prepare('SELECT 1 FROM accounts WHERE accountLower = ?').get(account.toLowerCase());
 }

@@ -89,8 +89,12 @@ export function logout(token: string): void {
   fetch('/api/logout', { method: 'POST', headers: authHeaders(token) }).catch(() => {});
 }
 
-export function getProfile(account: string): Promise<Profile | null> {
-  return jreq(`/api/profile?a=${encodeURIComponent(account)}`).then((d) => d.profile);
+/** A member's public profile (null if there is no such member) and whether they take private messages. */
+export function getProfile(account: string): Promise<{ profile: Profile | null; allowPm: boolean }> {
+  return jreq(`/api/profile?a=${encodeURIComponent(account)}`).then((d) => ({
+    profile: d.profile ?? null,
+    allowPm: d.allowPm !== false,
+  }));
 }
 
 export function saveProfile(token: string, patch: Partial<Profile>): Promise<Profile> {
