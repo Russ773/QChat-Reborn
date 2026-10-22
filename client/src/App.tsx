@@ -20,6 +20,7 @@ import { MediaPanel } from './components/MediaPanel.js';
 import { Message } from './components/Message.js';
 import { PreferencesModal } from './components/PreferencesModal.js';
 import { ProfileModal } from './components/ProfileModal.js';
+import { RoomsModal } from './components/RoomsModal.js';
 import { SoundPicker } from './components/SoundPicker.js';
 import { playSound as playSoundFx } from './media/sounds.js';
 import { useChat } from './useChat.js';
@@ -46,6 +47,17 @@ export default function App() {
   const [booting, setBooting] = useState<boolean>(() => !!getToken());
   const [modal, setModal] = useState<ModalTarget | null>(null);
   const [showPrefs, setShowPrefs] = useState(false);
+  const [showRooms, setShowRooms] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+
+  // Surface server errors (bad room name, too many rooms...) as a short toast.
+  const lastLog = state.serverLog[state.serverLog.length - 1];
+  useEffect(() => {
+    if (lastLog?.kind !== 'notice') return;
+    setToast(lastLog.text);
+    const t = window.setTimeout(() => setToast(null), 5000);
+    return () => window.clearTimeout(t);
+  }, [lastLog?.id]);
   const [autoplay, setAutoplay] = useState(true);
   const [draft, setDraft] = useState('');
 
@@ -168,28 +180,14 @@ export default function App() {
           </button>
         </div>
 
-        <JoinBox onJoin={chat.join} />
+        <button className="rooms-btn" onClick={() => setShowRooms(true)}>
+          <span>Browse rooms</span>
+          <span className="rooms-btn-plus">+ New</span>
+        </button>
 
-        {state.available.filter((r) => !state.order.includes(r)).length > 0 && (
-          <>
-            <div className="nav-label">Rooms</div>
-            <div className="buffers">
-              {state.available
-                .filter((r) => !state.order.includes(r))
-                .map((r) => (
-                  <button key={r} className="buffer" onClick={() => chat.join(r)}>
-                    <span className="buffer-hash">#</span>
-                    <span className="buffer-name">{r.replace(/^#/, '')}</span>
-                    <span className="chip-guest">join</span>
-                  </button>
-                ))}
-            </div>
-          </>
-        )}
-
-        <div className="nav-label">Joined</div>
+        <div className="nav-label">My rooms</div>
         <nav className="buffers">
-          {state.order.length === 0 && <p className="buffers-empty">Join a room above to start chatting.</p>}
+          {state.order.length === 0 && <p className="buffers-empty">You are not in any rooms yet.</p>}
           {state.order.map((name) => {
             const r = state.rooms[name];
             return (
@@ -245,10 +243,13 @@ export default function App() {
             <header className="chan-head">
               <div className="chan-title">
                 <span className="chan-name">Welcome</span>
-                <span className="chan-meta">pick a room on the left</span>
               </div>
             </header>
-            <ServerView events={state.serverLog} />
+            <div className="empty-state">
+              <p>You are not in a room right now.</p>
+              <button onClick={() => setShowRooms(true)}>Browse rooms</button>
+            </div>
+            {state.serverLog.some((e) => e.kind === 'notice') && <ServerView events={state.serverLog.filter((e) => e.kind === 'notice')} />}
           </>
         )}
       </main>
@@ -263,6 +264,17 @@ export default function App() {
           onUploadAvatar={modal.editable ? onUploadAvatar : undefined}
         />
       )}
+      {showRooms && (
+        <RoomsModal
+          rooms={state.roomList}
+          joined={state.order}
+          onRefresh={chat.listRooms}
+          onJoin={chat.join}
+          onOpen={chat.setActive}
+          onClose={() => setShowRooms(false)}
+        />
+      )}
+      {toast && <div className="toast" role="status">{toast}</div>}
       {showPrefs && token && (
         <PreferencesModal
           token={token}
@@ -396,24 +408,6 @@ function Connect({
         </div>
       </form>
     </div>
-  );
-}
-
-function JoinBox({ onJoin }: { onJoin: (room: string) => void }) {
-  const [name, setName] = useState('');
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = name.trim();
-    if (trimmed) {
-      onJoin(trimmed);
-      setName('');
-    }
-  };
-  return (
-    <form className="joinbox" onSubmit={submit}>
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="join or make a #room" />
-      <button type="submit">Join</button>
-    </form>
   );
 }
 

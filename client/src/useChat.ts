@@ -17,7 +17,7 @@ function initialState(nick: string): AppState {
     nick,
     account: null,
     status: 'idle',
-    available: [],
+    roomList: [],
     rooms: {},
     order: [],
     active: null,
@@ -61,8 +61,10 @@ function reducer(state: AppState, action: Action): AppState {
         nick: msg.you.nick,
         account: msg.you.account ?? null,
         status: 'online',
-        available: msg.rooms,
       };
+
+    case 'rooms':
+      return { ...state, roomList: msg.rooms };
 
     case 'joined': {
       const events: ChatEvent[] = msg.history.map((l) => ({
@@ -147,6 +149,7 @@ export interface UseChat {
   playSound: (room: string, sound: string) => void;
   playYouTube: (room: string, ref: string, title?: string) => void;
   mediaControl: (room: string, op: 'pause' | 'resume' | 'seek' | 'stop', pos?: number) => void;
+  listRooms: () => void;
 }
 
 export function useChat(): UseChat {
@@ -179,6 +182,7 @@ export function useChat(): UseChat {
   const changeNick = useCallback((nick: string) => clientRef.current?.nick(nick), []);
   const setActive = useCallback((room: string) => dispatch({ type: 'setActive', room }), []);
   const playSound = useCallback((room: string, sound: string) => clientRef.current?.playSound(room, sound), []);
+  const listRooms = useCallback(() => clientRef.current?.listRooms(), []);
   const playYouTube = useCallback(
     (room: string, ref: string, title?: string) => clientRef.current?.playYouTube(room, ref, title),
     [],
@@ -201,5 +205,6 @@ export function useChat(): UseChat {
     playSound,
     playYouTube,
     mediaControl,
+    listRooms,
   };
 }

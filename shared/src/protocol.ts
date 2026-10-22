@@ -53,11 +53,13 @@ export type ClientMsg =
   | { t: 'playYouTube'; room: string; ref: string; title?: string }
   | { t: 'mediaControl'; room: string; op: 'pause' | 'resume' | 'seek' | 'stop'; pos?: number }
   | { t: 'playSound'; room: string; sound: string }
+  | { t: 'listRooms' }
   | { t: 'ping' };
 
 /** Messages the server sends to the browser. */
 export type ServerMsg =
-  | { t: 'welcome'; you: ChatUser; rooms: string[] }
+  | { t: 'welcome'; you: ChatUser }
+  | { t: 'rooms'; rooms: RoomInfo[] }
   | { t: 'joined'; room: string; members: string[]; history: ChatLine[] }
   | { t: 'left'; room: string }
   | { t: 'message'; room: string; line: ChatLine }
@@ -85,10 +87,27 @@ export function decodeMsg<T = ClientMsg | ServerMsg>(data: string): T | null {
   }
 }
 
+/** One row of the room browser. */
+export interface RoomInfo {
+  name: string;
+  members: number;
+  /** True while a synced video is playing in the room. */
+  media: boolean;
+  /** Built-in rooms are permanent; user-made rooms vanish when empty. */
+  permanent: boolean;
+}
+
+export const MAX_ROOM_NAME = 30;
+
 /** Normalise a room name: lowercase, leading '#', no spaces. */
 export function normalizeRoom(name: string): string {
   const cleaned = name.trim().toLowerCase().replace(/\s+/g, '-').replace(/^#+/, '');
   return cleaned ? `#${cleaned}` : '';
+}
+
+/** A normalised room name is valid if it is #, then 1..30 of a-z 0-9 _ -. */
+export function validRoom(room: string): boolean {
+  return new RegExp(`^#[a-z0-9_-]{1,${MAX_ROOM_NAME}}$`).test(room);
 }
 
 /** Validate a nickname: 1..24 chars, letters/digits/_-[]. */

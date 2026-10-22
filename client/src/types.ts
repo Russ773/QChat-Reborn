@@ -1,4 +1,4 @@
-import type { MediaState } from '@qchat/shared';
+import type { MediaState, RoomInfo } from '@qchat/shared';
 import type { ChatStatus } from './chat/client.js';
 
 export type ChatEventKind =
@@ -37,8 +37,8 @@ export interface AppState {
   /** The logged-in account, or null for guests. */
   account: string | null;
   status: ChatStatus;
-  /** Rooms available to join (advertised by the server on welcome). */
-  available: string[];
+  /** Every room on the server, as last reported (room browser). */
+  roomList: RoomInfo[];
   /** Rooms the user has joined, keyed by room name. */
   rooms: Record<string, RoomState>;
   /** Ordered list of joined room names (for the sidebar). */

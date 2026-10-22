@@ -5,10 +5,12 @@ import {
   encodeMsg,
   normalizeRoom,
   validNick,
+  validRoom,
   youTubeId,
   type ChatLine,
   type ClientMsg,
   type MediaState,
+  type RoomInfo,
   type ServerMsg,
 } from '@qchat/shared';
 
@@ -26,6 +28,8 @@ export type AuthResolver = (token: string) => string | null;
 const DEFAULT_ROOMS = ['#lobby', '#general', '#help'];
 const HISTORY_LIMIT = 50;
 const MAX_TEXT = 2000;
+/** Cap on rooms in existence, so nobody can fill memory by spamming creates. */
+const MAX_ROOMS = 200;
 
 /**
  * The native real-time chat engine. Holds live connections, room membership
@@ -79,6 +83,8 @@ export class ChatServer {
         return this.onMediaControl(conn, msg.room, msg.op, msg.pos);
       case 'playSound':
         return this.onPlaySound(conn, msg.room, msg.sound);
+      case 'listRooms':
+        return this.send(conn, { t: 'rooms', rooms: this.roomInfos() });
       case 'ping':
         return this.send(conn, { t: 'pong' });
     }
@@ -92,19 +98,27 @@ export class ChatServer {
     this.send(conn, {
       t: 'welcome',
       you: { id: conn.id, nick: conn.nick, account: conn.account },
-      rooms: [...this.rooms.keys()],
     });
   }
 
   private onJoin(conn: Conn, roomName: string): void {
     if (!conn.nick) return this.send(conn, { t: 'error', text: 'Say hello first.' });
     const room = normalizeRoom(roomName);
-    if (!room) return this.send(conn, { t: 'error', text: 'That is not a valid room name.' });
+    if (!validRoom(room)) {
+      return this.send(conn, {
+        t: 'error',
+        text: 'Room names can use letters, numbers, - and _ (up to 30 characters).',
+      });
+    }
 
     let members = this.rooms.get(room);
     if (!members) {
+      if (this.rooms.size >= MAX_ROOMS) {
+        return this.send(conn, { t: 'error', text: 'There are too many rooms right now. Try joining an existing one.' });
+      }
       members = new Set();
       this.rooms.set(room, members);
+      this.log(`room created: ${room} by ${conn.nick}`);
     }
     if (!members.has(conn.id)) {
       members.add(conn.id);
@@ -195,6 +209,7 @@ export class ChatServer {
     this.send(conn, { t: 'left', room });
     this.broadcast(room, { t: 'leaveNotice', room, nick: conn.nick, reason });
     this.broadcast(room, { t: 'presence', room, members: this.memberNicks(room) });
+    this.pruneIfEmpty(room);
   }
 
   private onSay(conn: Conn, roomName: string, text: string): void {
@@ -232,10 +247,32 @@ export class ChatServer {
       members.delete(conn.id);
       this.broadcast(room, { t: 'leaveNotice', room, nick: conn.nick, reason: 'disconnected' });
       this.broadcast(room, { t: 'presence', room, members: this.memberNicks(room) });
+      this.pruneIfEmpty(room);
     }
   }
 
   // --- Helpers --------------------------------------------------------------
+
+  /** User-made rooms disappear (with their history and media) once empty. */
+  private pruneIfEmpty(room: string): void {
+    if (DEFAULT_ROOMS.includes(room)) return;
+    const members = this.rooms.get(room);
+    if (members && members.size === 0) {
+      this.rooms.delete(room);
+      this.history.delete(room);
+      this.media.delete(room);
+      this.log(`room removed (empty): ${room}`);
+    }
+  }
+
+  private roomInfos(): RoomInfo[] {
+    return [...this.rooms.entries()].map(([name, members]) => ({
+      name,
+      members: members.size,
+      media: this.media.has(name),
+      permanent: DEFAULT_ROOMS.includes(name),
+    }));
+  }
 
   private send(conn: Conn, msg: ServerMsg): void {
     if (conn.ws.readyState === conn.ws.OPEN) {

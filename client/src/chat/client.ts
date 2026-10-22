@@ -61,6 +61,9 @@ export class ChatClient {
   playSound(room: string, sound: string): void {
     this.send({ t: 'playSound', room, sound });
   }
+  listRooms(): void {
+    this.send({ t: 'listRooms' });
+  }
   close(): void {
     this.ws?.close();
   }
