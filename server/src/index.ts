@@ -3,15 +3,23 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { basename, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { accountForToken } from './accounts.js';
+import { accountForToken, ensureAdmins, isAdmin } from './accounts.js';
 import { avatarsDir } from './avatars.js';
 import { handleApi } from './api.js';
 import { ChatServer } from './chat/server.js';
+import { getSettings } from './settings.js';
 
 const HTTP_PORT = Number(process.env.HTTP_PORT ?? 8080);
 const log = (msg: string) => console.log(`[qchat] ${new Date().toISOString()} ${msg}`);
 
-const chat = new ChatServer(log, (token) => accountForToken(token));
+for (const name of ensureAdmins()) log(`promoted ${name} to administrator (ADMIN_ACCOUNTS)`);
+
+const chat = new ChatServer(log, {
+  resolve: (token) => accountForToken(token),
+  welcome: () => getSettings().welcomeMessage,
+  maintenance: () => getSettings().maintenance,
+  isAdmin: (account) => isAdmin(account),
+});
 
 // --- Static client --------------------------------------------------------
 const serverRoot = resolve(fileURLToPath(new URL('.', import.meta.url)), '..');
@@ -36,7 +44,7 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<vo
     res.writeHead(200, { 'content-type': 'text/plain' }).end('ok');
     return;
   }
-  if (await handleApi(req, res)) return;
+  if (await handleApi(req, res, chat)) return;
   const reqPath = decodeURIComponent((req.url ?? '/').split('?')[0]);
   if (reqPath.startsWith('/avatars/')) {
     serveAvatar(res, reqPath);

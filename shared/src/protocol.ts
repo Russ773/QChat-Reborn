@@ -71,6 +71,7 @@ export type ServerMsg =
   | { t: 'system'; room?: string; text: string }
   | { t: 'media'; room: string; state: MediaState | null }
   | { t: 'sound'; room: string; sound: string; from: string }
+  | { t: 'announce'; text: string; by: string; room?: string }
   | { t: 'error'; text: string }
   | { t: 'pong' };
 

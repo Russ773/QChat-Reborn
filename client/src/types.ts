@@ -46,6 +46,8 @@ export interface AppState {
   active: string | null;
   /** System/notice log shown when no room is active. */
   serverLog: ChatEvent[];
+  /** The latest admin announcement, shown as a dismissible banner. */
+  announcement: { id: number; text: string; by: string } | null;
   /** The most recent sound to play (bumped id so effects re-fire). */
   lastSound: { id: number; room: string; sound: string; from: string } | null;
 }

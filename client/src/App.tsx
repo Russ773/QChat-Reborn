@@ -1,20 +1,21 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Profile } from '@qchat/shared';
 import type { ChatEvent } from './types.js';
 import {
   getProfile,
   getToken,
-  login,
   logout,
   me,
-  register,
   saveProfile,
   setToken,
   uploadAvatar,
   type AuthResult,
+  type Role,
 } from './api.js';
+import { AdminPage } from './admin/AdminPage.js';
 import { Avatar } from './components/Avatar.js';
 import { EmojiPicker } from './components/EmojiPicker.js';
+import { Gate } from './components/Gate.js';
 import { LogoMark, Wordmark } from './components/Logo.js';
 import { MediaPanel } from './components/MediaPanel.js';
 import { Message } from './components/Message.js';
@@ -25,32 +26,48 @@ import { SoundPicker } from './components/SoundPicker.js';
 import { playSound as playSoundFx } from './media/sounds.js';
 import { useChat } from './useChat.js';
 
-const STATUS_LABEL: Record<string, string> = {
-  connecting: 'connecting…',
-  online: 'online',
-  closed: 'offline',
-  error: 'connection error',
-  idle: 'idle',
-};
-
 interface ModalTarget {
   account: string;
   profile: Profile | null;
   editable: boolean;
 }
 
+const isAdminPath = () => window.location.pathname.replace(/\/+$/, '') === '/admin';
+const roomLabel = (name: string) => name.replace(/^#/, '');
+
 export default function App() {
   const chat = useChat();
   const { state, status } = chat;
   const [token, setTok] = useState<string | null>(getToken());
+  const [role, setRole] = useState<Role | null>(null);
   const [myProfile, setMyProfile] = useState<Profile | null>(null);
   const [booting, setBooting] = useState<boolean>(() => !!getToken());
+  const [gateNotice, setGateNotice] = useState<string | null>(null);
+  const [view, setView] = useState<'chat' | 'admin'>(() => (isAdminPath() ? 'admin' : 'chat'));
   const [modal, setModal] = useState<ModalTarget | null>(null);
   const [showPrefs, setShowPrefs] = useState(false);
   const [showRooms, setShowRooms] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [autoplay, setAutoplay] = useState(true);
+  const [draft, setDraft] = useState('');
 
-  // Surface server errors (bad room name, too many rooms...) as a short toast.
+  // Keep the page address and the view in step (so /admin works and Back works).
+  const go = useCallback((next: 'chat' | 'admin') => {
+    setView(next);
+    const path = next === 'admin' ? '/admin' : '/';
+    if (window.location.pathname !== path) window.history.pushState(null, '', path);
+  }, []);
+  useEffect(() => {
+    const onPop = () => setView(isAdminPath() ? 'admin' : 'chat');
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
+  // Only admins get the admin area; anyone else landing on /admin goes to the chat.
+  useEffect(() => {
+    if (view === 'admin' && role && role !== 'admin') go('chat');
+  }, [view, role, go]);
+
+  // Surface server messages (bad room name, you were removed...) as a short toast.
   const lastLog = state.serverLog[state.serverLog.length - 1];
   useEffect(() => {
     if (lastLog?.kind !== 'notice') return;
@@ -58,8 +75,6 @@ export default function App() {
     const t = window.setTimeout(() => setToast(null), 5000);
     return () => window.clearTimeout(t);
   }, [lastLog?.id]);
-  const [autoplay, setAutoplay] = useState(true);
-  const [draft, setDraft] = useState('');
 
   // Play incoming sounds (your own always play; others respect autoplay).
   useEffect(() => {
@@ -77,14 +92,16 @@ export default function App() {
       .then((res) => {
         if (cancelled) return;
         setMyProfile(res.profile);
+        setRole(res.role);
         setAutoplay(res.prefs?.autoplay ?? true);
         chat.connect(res.account, t);
         setBooting(false);
       })
-      .catch(() => {
+      .catch((err: Error) => {
         if (cancelled) return;
         setToken(null);
         setTok(null);
+        if (err.message !== 'Not logged in.') setGateNotice(err.message);
         setBooting(false);
       });
     return () => {
@@ -93,10 +110,11 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const onGuest = (nick: string) => chat.connect(nick);
   const onAuthed = (res: AuthResult) => {
+    setGateNotice(null);
     setToken(res.token);
     setTok(res.token);
+    setRole(res.role);
     setMyProfile(res.profile);
     chat.connect(res.account, res.token);
     me(res.token).then((r) => setAutoplay(r.prefs?.autoplay ?? true)).catch(() => {});
@@ -104,7 +122,7 @@ export default function App() {
   const doLogout = () => {
     if (token) logout(token);
     setToken(null);
-    window.location.reload();
+    window.location.assign('/');
   };
 
   const openOwnProfile = () => {
@@ -134,12 +152,17 @@ export default function App() {
 
   if (booting) return <Splash />;
   if (status === 'idle' || state.nick === '') {
-    return <Connect onGuest={onGuest} onAuthed={onAuthed} />;
+    const serverNotice = lastLog?.kind === 'notice' ? lastLog.text : null;
+    return <Gate onAuthed={onAuthed} notice={gateNotice ?? serverNotice} />;
+  }
+  if (view === 'admin' && role === 'admin' && token) {
+    return <AdminPage token={token} me={state.nick} onBack={() => go('chat')} />;
   }
 
   const active = state.active;
   const room = active ? state.rooms[active] : null;
   const disconnected = status === 'closed' || status === 'error';
+  const ann = state.announcement;
 
   return (
     <div className="app">
@@ -149,6 +172,14 @@ export default function App() {
           <button onClick={() => chat.connect(state.account ?? state.nick, token)}>Reconnect</button>
         </div>
       )}
+      {ann && (
+        <div className="announce-bar" role="status">
+          <span>
+            📢 <b>{ann.by}:</b> {ann.text}
+          </span>
+          <button onClick={chat.dismissAnnouncement} aria-label="Dismiss announcement">✕</button>
+        </div>
+      )}
 
       <aside className="sidebar">
         <div className="brand">
@@ -156,28 +187,23 @@ export default function App() {
           <Wordmark />
         </div>
 
-        <div
-          className={`profile-chip ${state.account ? 'editable' : ''}`}
-          onClick={state.account ? openOwnProfile : undefined}
-          title={state.account ? 'View and edit your profile' : undefined}
-        >
+        <div className="profile-chip editable" onClick={openOwnProfile} title="View and edit your profile">
           <Avatar name={state.nick} src={myProfile?.avatar} size={34} />
           <div className="profile-meta">
             <span className="profile-nick">{myProfile?.displayName || state.nick}</span>
             <span className="profile-status">
               <span className={`dot ${status}`} />
-              {state.account ? `✓ ${state.account}` : 'guest'}
+              {role === 'admin' ? 'Admin' : 'Member'}
             </span>
           </div>
-          {state.account && <span className="chip-edit">✎</span>}
+          <span className="chip-edit">✎</span>
         </div>
         <div className="chip-links">
-          {state.account && (
-            <button className="auth-link" onClick={() => setShowPrefs(true)}>Preferences</button>
+          <button className="auth-link" onClick={() => setShowPrefs(true)}>Preferences</button>
+          {role === 'admin' && (
+            <button className="auth-link admin-link" onClick={() => go('admin')}>Admin</button>
           )}
-          <button className="auth-link" onClick={state.account ? doLogout : () => window.location.reload()}>
-            {state.account ? 'Log out' : 'Log in or sign up'}
-          </button>
+          <button className="auth-link" onClick={doLogout}>Log out</button>
         </div>
 
         <button className="rooms-btn" onClick={() => setShowRooms(true)}>
@@ -196,8 +222,7 @@ export default function App() {
                 className={`buffer ${active === name ? 'active' : ''}`}
                 onClick={() => chat.setActive(name)}
               >
-                <span className="buffer-hash">#</span>
-                <span className="buffer-name">{name.replace(/^#/, '')}</span>
+                <span className="buffer-name">{roomLabel(name)}</span>
                 {r && r.unread > 0 && <span className="badge">{r.unread}</span>}
               </button>
             );
@@ -210,8 +235,7 @@ export default function App() {
           <>
             <header className="chan-head">
               <div className="chan-title">
-                <span className="chan-hash">#</span>
-                <span className="chan-name">{room.name.replace(/^#/, '')}</span>
+                <span className="chan-name">{roomLabel(room.name)}</span>
                 <span className="chan-meta">{room.members.length} online</span>
               </div>
               <div className="chan-actions">
@@ -249,7 +273,6 @@ export default function App() {
               <p>You are not in a room right now.</p>
               <button onClick={() => setShowRooms(true)}>Browse rooms</button>
             </div>
-            {state.serverLog.some((e) => e.kind === 'notice') && <ServerView events={state.serverLog.filter((e) => e.kind === 'notice')} />}
           </>
         )}
       </main>
@@ -314,103 +337,6 @@ function Splash() {
   );
 }
 
-function Connect({
-  onGuest,
-  onAuthed,
-}: {
-  onGuest: (nick: string) => void;
-  onAuthed: (res: AuthResult) => void;
-}) {
-  const [mode, setMode] = useState<'guest' | 'login' | 'signup'>('guest');
-  const [nick, setNick] = useState('');
-  const [account, setAccount] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    if (mode === 'guest') {
-      const n = nick.trim();
-      if (n) onGuest(n);
-      return;
-    }
-    setBusy(true);
-    try {
-      const res =
-        mode === 'login'
-          ? await login(account.trim(), password)
-          : await register(account.trim(), email.trim(), password);
-      onAuthed(res);
-    } catch (err) {
-      setError((err as Error).message);
-      setBusy(false);
-    }
-  };
-
-  const cta = mode === 'guest' ? 'Jump in' : mode === 'login' ? 'Log in' : 'Create account';
-
-  return (
-    <div className="connect">
-      <div className="connect-bubbles" aria-hidden="true">
-        <span className="cb cb1">🎵</span>
-        <span className="cb cb2">💬</span>
-        <span className="cb cb3">🎬</span>
-        <span className="cb cb4">😄</span>
-        <span className="cb cb5">✨</span>
-      </div>
-      <form onSubmit={submit}>
-        <div className="connect-brand">
-          <LogoMark size={64} />
-          <h1><Wordmark /></h1>
-        </div>
-        <p className="tagline">Media Webchat, Reborn.</p>
-
-        {mode === 'guest' ? (
-          <input autoFocus value={nick} onChange={(e) => setNick(e.target.value)} placeholder="Choose a nickname" maxLength={24} />
-        ) : (
-          <>
-            <input autoFocus value={account} onChange={(e) => setAccount(e.target.value)} placeholder="Username" autoComplete="username" />
-            {mode === 'signup' && (
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email (optional)" autoComplete="email" />
-            )}
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Password"
-              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-            />
-          </>
-        )}
-
-        {error && <p className="pm-error">{error}</p>}
-        <button type="submit" disabled={busy}>{busy ? 'Please wait…' : cta}</button>
-
-        <div className="connect-switch">
-          {mode === 'guest' ? (
-            <>
-              <button type="button" className="link-btn" onClick={() => setMode('login')}>Log in</button>
-              <span>·</span>
-              <button type="button" className="link-btn" onClick={() => setMode('signup')}>Create an account</button>
-            </>
-          ) : (
-            <>
-              <button type="button" className="link-btn" onClick={() => setMode(mode === 'login' ? 'signup' : 'login')}>
-                {mode === 'login' ? 'Create an account' : 'Have an account? Log in'}
-              </button>
-              <span>·</span>
-              <button type="button" className="link-btn" onClick={() => setMode('guest')}>Continue as guest</button>
-            </>
-          )}
-        </div>
-      </form>
-    </div>
-  );
-}
-
 function RoomChat({
   events,
   draft,
@@ -469,21 +395,6 @@ function RoomChat({
         />
         <button type="submit">Send</button>
       </form>
-    </div>
-  );
-}
-
-function ServerView({ events }: { events: ChatEvent[] }) {
-  const scrollerRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const el = scrollerRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [events.length]);
-  return (
-    <div className="server-view" ref={scrollerRef}>
-      {events.map((ev) => (
-        <Message key={ev.id} event={ev} />
-      ))}
     </div>
   );
 }

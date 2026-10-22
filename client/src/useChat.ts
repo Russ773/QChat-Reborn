@@ -8,6 +8,7 @@ export const DEFAULT_ROOM = '#lobby';
 
 let seq = 0;
 let soundSeq = 0;
+let announceSeq = 0;
 function makeEvent(kind: ChatEventKind, text: string, from?: string, self?: boolean): ChatEvent {
   return { id: `e${Date.now()}-${seq++}`, kind, text, from, ts: Date.now(), self };
 }
@@ -22,6 +23,7 @@ function initialState(nick: string): AppState {
     order: [],
     active: null,
     serverLog: [makeEvent('system', 'Connecting…')],
+    announcement: null,
     lastSound: null,
   };
 }
@@ -29,7 +31,8 @@ function initialState(nick: string): AppState {
 type Action =
   | { type: 'server'; msg: ServerMsg }
   | { type: 'status'; status: ChatStatus }
-  | { type: 'setActive'; room: string };
+  | { type: 'setActive'; room: string }
+  | { type: 'dismissAnnouncement' };
 
 function patchRoom(state: AppState, name: string, fn: (r: RoomState) => RoomState): AppState {
   const room = state.rooms[name];
@@ -47,6 +50,7 @@ function pushEvent(state: AppState, name: string, event: ChatEvent): AppState {
 
 function reducer(state: AppState, action: Action): AppState {
   if (action.type === 'status') return { ...state, status: action.status };
+  if (action.type === 'dismissAnnouncement') return { ...state, announcement: null };
   if (action.type === 'setActive') {
     const r = state.rooms[action.room];
     const rooms = r ? { ...state.rooms, [action.room]: { ...r, unread: 0 } } : state.rooms;
@@ -104,6 +108,17 @@ function reducer(state: AppState, action: Action): AppState {
     case 'media':
       return patchRoom(state, msg.room, (r) => ({ ...r, media: msg.state }));
 
+    case 'announce': {
+      // Show it in the chat of every joined room (or just the targeted one),
+      // and as a banner.
+      let next = state;
+      const targets = msg.room ? [msg.room] : Object.keys(state.rooms);
+      for (const r of targets) {
+        next = pushEvent(next, r, makeEvent('announcement', `📢 ${msg.by}: ${msg.text}`, msg.by));
+      }
+      return { ...next, announcement: { id: ++announceSeq, text: msg.text, by: msg.by } };
+    }
+
     case 'sound': {
       const ev = makeEvent('system', `${msg.from} played ${soundLabel(msg.sound)} 🔊`, msg.from);
       const next = state.rooms[msg.room] ? pushEvent(state, msg.room, ev) : state;
@@ -150,6 +165,7 @@ export interface UseChat {
   playYouTube: (room: string, ref: string, title?: string) => void;
   mediaControl: (room: string, op: 'pause' | 'resume' | 'seek' | 'stop', pos?: number) => void;
   listRooms: () => void;
+  dismissAnnouncement: () => void;
 }
 
 export function useChat(): UseChat {
@@ -183,6 +199,7 @@ export function useChat(): UseChat {
   const setActive = useCallback((room: string) => dispatch({ type: 'setActive', room }), []);
   const playSound = useCallback((room: string, sound: string) => clientRef.current?.playSound(room, sound), []);
   const listRooms = useCallback(() => clientRef.current?.listRooms(), []);
+  const dismissAnnouncement = useCallback(() => dispatch({ type: 'dismissAnnouncement' }), []);
   const playYouTube = useCallback(
     (room: string, ref: string, title?: string) => clientRef.current?.playYouTube(room, ref, title),
     [],
@@ -206,5 +223,6 @@ export function useChat(): UseChat {
     playYouTube,
     mediaControl,
     listRooms,
+    dismissAnnouncement,
   };
 }

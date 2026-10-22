@@ -4,9 +4,9 @@ import {
   decodeMsg,
   encodeMsg,
   normalizeRoom,
-  validNick,
   validRoom,
   youTubeId,
+  type AdminRoom,
   type ChatLine,
   type ClientMsg,
   type MediaState,
@@ -22,8 +22,16 @@ interface Conn {
   rooms: Set<string>;
 }
 
-/** Resolves a session token to an account name, or null. */
-export type AuthResolver = (token: string) => string | null;
+/** What the chat engine needs to know from the rest of the app. */
+export interface ChatPolicy {
+  /** Resolve a session token to an account name, or null. */
+  resolve: (token: string) => string | null;
+  /** The line shown to everyone as they join a room ('' for none). */
+  welcome: () => string;
+  /** While true, only administrators may be connected. */
+  maintenance: () => boolean;
+  isAdmin: (account: string) => boolean;
+}
 
 const DEFAULT_ROOMS = ['#lobby', '#general', '#help'];
 const HISTORY_LIMIT = 50;
@@ -43,8 +51,8 @@ export class ChatServer {
   private media = new Map<string, MediaState>(); // room -> current synced media
 
   constructor(
-    private log: (msg: string) => void = () => {},
-    private auth?: AuthResolver,
+    private log: (msg: string) => void,
+    private policy: ChatPolicy,
   ) {
     for (const r of DEFAULT_ROOMS) {
       this.rooms.set(r, new Set());
@@ -76,7 +84,7 @@ export class ChatServer {
       case 'say':
         return this.onSay(conn, msg.room, msg.text);
       case 'nick':
-        return this.onNick(conn, msg.nick);
+        return this.onNick(conn);
       case 'playYouTube':
         return this.onPlayYouTube(conn, msg.room, msg.ref, msg.title);
       case 'mediaControl':
@@ -90,11 +98,15 @@ export class ChatServer {
     }
   }
 
-  private onHello(conn: Conn, desired: string, token?: string): void {
-    // A valid token logs the connection in and locks the nick to the account.
-    const account = token && this.auth ? this.auth(token) : null;
+  private onHello(conn: Conn, _desired: string, token?: string): void {
+    // Chatting needs an account: no valid session token, no connection.
+    const account = token ? this.policy.resolve(token) : null;
+    if (!account) return this.reject(conn, 'Please log in to chat.');
+    if (this.policy.maintenance() && !this.policy.isAdmin(account)) {
+      return this.reject(conn, 'QChat is down for maintenance. Please try again soon.');
+    }
     conn.account = account;
-    conn.nick = account ?? this.uniqueNick(desired);
+    conn.nick = account;
     this.send(conn, {
       t: 'welcome',
       you: { id: conn.id, nick: conn.nick, account: conn.account },
@@ -120,7 +132,8 @@ export class ChatServer {
       this.rooms.set(room, members);
       this.log(`room created: ${room} by ${conn.nick}`);
     }
-    if (!members.has(conn.id)) {
+    const joinedNow = !members.has(conn.id);
+    if (joinedNow) {
       members.add(conn.id);
       conn.rooms.add(room);
       this.broadcast(room, { t: 'joinNotice', room, nick: conn.nick }, conn.id);
@@ -135,6 +148,8 @@ export class ChatServer {
     this.broadcast(room, { t: 'presence', room, members: this.memberNicks(room) });
     const media = this.media.get(room);
     if (media) this.send(conn, { t: 'media', room, state: media });
+    const welcome = this.policy.welcome();
+    if (welcome && joinedNow) this.send(conn, { t: 'system', room, text: welcome });
   }
 
   private inRoom(conn: Conn, room: string): boolean {
@@ -226,16 +241,9 @@ export class ChatServer {
     this.broadcast(room, { t: 'message', room, line });
   }
 
-  private onNick(conn: Conn, desired: string): void {
-    const next = this.uniqueNick(desired);
-    if (next === conn.nick) return;
-    const from = conn.nick;
-    conn.nick = next;
-    this.send(conn, { t: 'nickChanged', nick: next });
-    for (const room of conn.rooms) {
-      this.broadcast(room, { t: 'nickNotice', room, from, to: next });
-      this.broadcast(room, { t: 'presence', room, members: this.memberNicks(room) });
-    }
+  private onNick(conn: Conn): void {
+    // Your name in the chat is your account name; it cannot be changed here.
+    this.send(conn, { t: 'error', text: 'Your chat name is your account name.' });
   }
 
   private disconnect(conn: Conn): void {
@@ -294,12 +302,13 @@ export class ChatServer {
   private memberNicks(room: string): string[] {
     const members = this.rooms.get(room);
     if (!members) return [];
-    const nicks: string[] = [];
+    // A unique list: the same account in two tabs is one member.
+    const nicks = new Set<string>();
     for (const id of members) {
       const conn = this.conns.get(id);
-      if (conn) nicks.push(conn.nick);
+      if (conn) nicks.add(conn.nick);
     }
-    return nicks.sort((a, b) => a.localeCompare(b));
+    return [...nicks].sort((a, b) => a.localeCompare(b));
   }
 
   private pushHistory(room: string, line: ChatLine): void {
@@ -309,18 +318,132 @@ export class ChatServer {
     this.history.set(room, lines);
   }
 
-  /** Ensure a nick is valid and not already taken (case-insensitive). */
-  private uniqueNick(desired: string): string {
-    let base = (desired || 'guest').trim();
-    if (!validNick(base)) base = 'guest' + Math.floor(Math.random() * 1000);
-    const taken = new Set(
-      [...this.conns.values()].map((c) => c.nick.toLowerCase()).filter(Boolean),
+  /** Tell a connection why it is refused, then hang up. */
+  private reject(conn: Conn, text: string): void {
+    this.send(conn, { t: 'error', text });
+    conn.ws.close();
+  }
+
+  // --- Admin controls (called by the admin API, which checks permissions) ----
+
+  stats(): { online: number; rooms: number; videos: number } {
+    return {
+      online: [...this.conns.values()].filter((c) => c.account).length,
+      rooms: this.rooms.size,
+      videos: this.media.size,
+    };
+  }
+
+  onlineAccounts(): Set<string> {
+    return new Set(
+      [...this.conns.values()].filter((c) => c.account).map((c) => c.account!.toLowerCase()),
     );
-    if (!taken.has(base.toLowerCase())) return base;
-    for (let i = 1; i < 1000; i++) {
-      const candidate = `${base}${i}`;
-      if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
+
+  adminRooms(): AdminRoom[] {
+    return [...this.rooms.keys()].map((name) => ({
+      name,
+      permanent: DEFAULT_ROOMS.includes(name),
+      members: this.memberNicks(name),
+      media: this.media.get(name) ?? null,
+      lines: (this.history.get(name) ?? []).length,
+    }));
+  }
+
+  /** Disconnect every connection of an account. Returns how many were closed. */
+  kickAccount(account: string, reason: string): number {
+    let n = 0;
+    for (const c of [...this.conns.values()]) {
+      if (c.account && c.account.toLowerCase() === account.toLowerCase()) {
+        this.send(c, { t: 'error', text: reason });
+        c.ws.close();
+        n++;
+      }
     }
-    return `${base}${randomUUID().slice(0, 4)}`;
+    return n;
+  }
+
+  /** Disconnect everyone who is not an administrator (maintenance mode). */
+  kickNonAdmins(reason: string): number {
+    let n = 0;
+    for (const c of [...this.conns.values()]) {
+      if (c.account && !this.policy.isAdmin(c.account)) {
+        this.send(c, { t: 'error', text: reason });
+        c.ws.close();
+        n++;
+      }
+    }
+    return n;
+  }
+
+  /** Remove everyone from a room and clear it. User rooms are then deleted. */
+  closeRoom(roomName: string): boolean {
+    const room = normalizeRoom(roomName);
+    const members = this.rooms.get(room);
+    if (!members) return false;
+    for (const id of [...members]) {
+      const c = this.conns.get(id);
+      members.delete(id);
+      if (!c) continue;
+      c.rooms.delete(room);
+      this.send(c, { t: 'left', room });
+      this.send(c, { t: 'error', text: `${room.replace(/^#/, '')} was closed by an administrator.` });
+    }
+    this.history.delete(room);
+    this.media.delete(room);
+    this.pruneIfEmpty(room);
+    return true;
+  }
+
+  stopMedia(roomName: string, by: string): boolean {
+    const room = normalizeRoom(roomName);
+    if (!this.media.has(room)) return false;
+    this.media.delete(room);
+    this.broadcast(room, { t: 'media', room, state: null });
+    this.broadcast(room, { t: 'system', room, text: `${by} (admin) stopped the video` });
+    return true;
+  }
+
+  /** Remove one person from one room. Returns false if they were not there. */
+  kickFromRoom(roomName: string, nick: string): boolean {
+    const room = normalizeRoom(roomName);
+    const members = this.rooms.get(room);
+    if (!members) return false;
+    let found = false;
+    for (const id of [...members]) {
+      const c = this.conns.get(id);
+      if (!c || c.nick.toLowerCase() !== nick.toLowerCase()) continue;
+      found = true;
+      members.delete(id);
+      c.rooms.delete(room);
+      this.send(c, { t: 'left', room });
+      this.send(c, { t: 'error', text: `You were removed from ${room.replace(/^#/, '')} by an administrator.` });
+    }
+    if (found) {
+      this.broadcast(room, { t: 'leaveNotice', room, nick, reason: 'removed by an admin' });
+      this.broadcast(room, { t: 'presence', room, members: this.memberNicks(room) });
+      this.pruneIfEmpty(room);
+    }
+    return found;
+  }
+
+  /** Send an announcement to one room, or to everyone connected. */
+  announce(text: string, by: string, roomName?: string): number {
+    const msg: ServerMsg = { t: 'announce', text, by };
+    if (roomName) {
+      const room = normalizeRoom(roomName);
+      const members = this.rooms.get(room);
+      if (!members) return 0;
+      this.broadcast(room, { ...msg, room });
+      return members.size;
+    }
+    let n = 0;
+    for (const c of this.conns.values()) {
+      if (c.account) {
+        this.send(c, msg);
+        n++;
+      }
+    }
+    return n;
   }
 }

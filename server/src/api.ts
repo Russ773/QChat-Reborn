@@ -1,84 +1,57 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { validAccount } from '@qchat/shared';
-import { accountForToken, createSession, login, logout, register } from './accounts.js';
+import { handleAdmin } from './admin.js';
+import { accountForToken, createSession, getRole, login, logout, register } from './accounts.js';
 import { AVATAR_TYPES, MAX_AVATAR_BYTES, saveAvatar } from './avatars.js';
+import type { ChatServer } from './chat/server.js';
+import { bearer, readBody, readRawBody, send } from './httpUtil.js';
 import { getPrefs, getProfile, publicProfile, saveProfile, savePrefs, setAvatar } from './profiles.js';
-
-function send(res: ServerResponse, code: number, body: unknown): void {
-  res.writeHead(code, { 'content-type': 'application/json' });
-  res.end(JSON.stringify(body));
-}
-
-function bearer(req: IncomingMessage): string | undefined {
-  const h = req.headers['authorization'];
-  return typeof h === 'string' && h.startsWith('Bearer ') ? h.slice(7) : undefined;
-}
-
-function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
-  return new Promise((resolve) => {
-    let data = '';
-    let size = 0;
-    req.on('data', (c) => {
-      size += c.length;
-      if (size > 100_000) {
-        req.destroy();
-        resolve({});
-        return;
-      }
-      data += c;
-    });
-    req.on('end', () => {
-      try {
-        const parsed = data ? JSON.parse(data) : {};
-        resolve(parsed && typeof parsed === 'object' ? parsed : {});
-      } catch {
-        resolve({});
-      }
-    });
-    req.on('error', () => resolve({}));
-  });
-}
-
-function readRawBody(req: IncomingMessage, maxBytes: number): Promise<Buffer | null> {
-  return new Promise((resolve) => {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    req.on('data', (c: Buffer) => {
-      size += c.length;
-      if (size > maxBytes) {
-        req.destroy();
-        resolve(null);
-        return;
-      }
-      chunks.push(c);
-    });
-    req.on('end', () => resolve(Buffer.concat(chunks)));
-    req.on('error', () => resolve(null));
-  });
-}
+import { getSettings } from './settings.js';
 
 /** Handle /api/* routes. Returns true if the request was handled. */
-export async function handleApi(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+export async function handleApi(req: IncomingMessage, res: ServerResponse, chat: ChatServer): Promise<boolean> {
   const [path, query = ''] = (req.url ?? '').split('?');
   if (!path.startsWith('/api/')) return false;
   const method = req.method ?? 'GET';
+
+  if (path.startsWith('/api/admin/')) return handleAdmin(req, res, path, query, chat);
+
+  // What the login screen needs to know before anyone is logged in.
+  if (path === '/api/site' && method === 'GET') {
+    const s = getSettings();
+    send(res, 200, { registrationOpen: s.registrationOpen, maintenance: s.maintenance });
+    return true;
+  }
 
   if (path === '/api/register' && method === 'POST') {
     const b = await readBody(req);
     const r = register(String(b.account ?? ''), String(b.email ?? ''), String(b.password ?? ''));
     if (!r.ok) {
-      send(res, 422, { error: r.error });
+      send(res, r.status ?? 422, { error: r.error });
     } else {
-      send(res, 200, { token: createSession(r.account!), account: r.account, profile: getProfile(r.account!) });
+      send(res, 200, {
+        token: createSession(r.account!),
+        account: r.account,
+        role: r.role,
+        profile: getProfile(r.account!),
+      });
     }
     return true;
   }
 
   if (path === '/api/login' && method === 'POST') {
     const b = await readBody(req);
-    const acct = login(String(b.account ?? ''), String(b.password ?? ''));
-    if (!acct) send(res, 401, { error: 'Wrong username or password.' });
-    else send(res, 200, { token: createSession(acct), account: acct, profile: getProfile(acct) });
+    const r = login(String(b.account ?? ''), String(b.password ?? ''));
+    if (!r.ok) {
+      send(res, r.status ?? 401, { error: r.error });
+    } else {
+      send(res, 200, {
+        token: createSession(r.account!),
+        account: r.account,
+        role: r.role,
+        profile: getProfile(r.account!),
+      });
+    }
     return true;
   }
 
@@ -90,8 +63,13 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse): Prom
 
   if (path === '/api/me' && method === 'GET') {
     const acct = accountForToken(bearer(req));
-    if (!acct) send(res, 401, { error: 'Not logged in.' });
-    else send(res, 200, { account: acct, profile: getProfile(acct), prefs: getPrefs(acct) });
+    if (!acct) {
+      send(res, 401, { error: 'Not logged in.' });
+    } else if (getSettings().maintenance && getRole(acct) !== 'admin') {
+      send(res, 503, { error: 'QChat is down for maintenance. Please try again soon.' });
+    } else {
+      send(res, 200, { account: acct, role: getRole(acct), profile: getProfile(acct), prefs: getPrefs(acct) });
+    }
     return true;
   }
 

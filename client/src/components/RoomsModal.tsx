@@ -85,10 +85,7 @@ export function RoomsModal({ rooms, joined, onRefresh, onJoin, onOpen, onClose }
             return (
               <div className="room-row" key={r.name}>
                 <div className="room-main">
-                  <span className="room-name">
-                    <span className="room-hash">#</span>
-                    {r.name.replace(/^#/, '')}
-                  </span>
+                  <span className="room-name">{r.name.replace(/^#/, '')}</span>
                   <span className="room-tags">
                     <span className="room-count">{r.members} here</span>
                     {r.media && <span className="room-tag playing">▶ playing</span>}
@@ -107,7 +104,6 @@ export function RoomsModal({ rooms, joined, onRefresh, onJoin, onOpen, onClose }
         <form className="rooms-create" onSubmit={create}>
           <div className="rooms-create-title">Create your own room</div>
           <div className="rooms-create-row">
-            <span className="rooms-create-hash">#</span>
             <input
               value={newName}
               onChange={(e) => {

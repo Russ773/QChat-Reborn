@@ -18,20 +18,33 @@ export function setToken(token: string | null): void {
   }
 }
 
-async function jreq(url: string, opts?: RequestInit): Promise<any> {
+export async function jreq(url: string, opts?: RequestInit): Promise<any> {
   const r = await fetch(url, opts);
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(data.error || 'Something went wrong.');
   return data;
 }
 
-const authHeaders = (token: string) => ({ authorization: `Bearer ${token}` });
-const jsonAuth = (token: string) => ({ 'content-type': 'application/json', ...authHeaders(token) });
+export const authHeaders = (token: string) => ({ authorization: `Bearer ${token}` });
+export const jsonAuth = (token: string) => ({ 'content-type': 'application/json', ...authHeaders(token) });
+
+export type Role = 'admin' | 'user';
 
 export interface AuthResult {
   token: string;
   account: string;
+  role: Role;
   profile: Profile | null;
+}
+
+/** What the login screen needs to know before anyone is logged in. */
+export interface SiteStatus {
+  registrationOpen: boolean;
+  maintenance: boolean;
+}
+
+export function siteStatus(): Promise<SiteStatus> {
+  return jreq('/api/site');
 }
 
 export function register(account: string, email: string, password: string): Promise<AuthResult> {
@@ -50,7 +63,9 @@ export function login(account: string, password: string): Promise<AuthResult> {
   });
 }
 
-export function me(token: string): Promise<{ account: string; profile: Profile | null; prefs: ProfilePrefs }> {
+export function me(
+  token: string,
+): Promise<{ account: string; role: Role; profile: Profile | null; prefs: ProfilePrefs }> {
   return jreq('/api/me', { headers: authHeaders(token) });
 }
 

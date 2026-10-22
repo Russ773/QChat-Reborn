@@ -14,11 +14,15 @@ db.exec(`
   PRAGMA journal_mode = WAL;
 
   CREATE TABLE IF NOT EXISTS accounts (
-    accountLower TEXT PRIMARY KEY,
-    account      TEXT NOT NULL,
-    email        TEXT,
-    passHash     TEXT NOT NULL,
-    createdAt    INTEGER NOT NULL
+    accountLower    TEXT PRIMARY KEY,
+    account         TEXT NOT NULL,
+    email           TEXT,
+    passHash        TEXT NOT NULL,
+    createdAt       INTEGER NOT NULL,
+    role            TEXT NOT NULL DEFAULT 'user',
+    suspended       INTEGER NOT NULL DEFAULT 0,
+    suspendedReason TEXT,
+    lastLogin       INTEGER
   );
 
   CREATE TABLE IF NOT EXISTS profiles (
@@ -48,4 +52,32 @@ db.exec(`
     accountLower TEXT NOT NULL,
     createdAt    INTEGER NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS audit (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts     INTEGER NOT NULL,
+    admin  TEXT NOT NULL,
+    action TEXT NOT NULL,
+    target TEXT,
+    detail TEXT
+  );
 `);
+
+/** Add a column to an existing table if an older database lacks it. */
+function addColumn(table: string, column: string, ddl: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+  }
+}
+
+// Migrations for databases created before the admin features existed.
+addColumn('accounts', 'role', "TEXT NOT NULL DEFAULT 'user'");
+addColumn('accounts', 'suspended', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('accounts', 'suspendedReason', 'TEXT');
+addColumn('accounts', 'lastLogin', 'INTEGER');
