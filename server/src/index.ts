@@ -1,9 +1,10 @@
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { extname, join, normalize, resolve } from 'node:path';
+import { basename, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { accountForToken } from './accounts.js';
+import { avatarsDir } from './avatars.js';
 import { handleApi } from './api.js';
 import { ChatServer } from './chat/server.js';
 
@@ -36,6 +37,11 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<vo
     return;
   }
   if (await handleApi(req, res)) return;
+  const reqPath = decodeURIComponent((req.url ?? '/').split('?')[0]);
+  if (reqPath.startsWith('/avatars/')) {
+    serveAvatar(res, reqPath);
+    return;
+  }
   if (!existsSync(clientDir)) {
     res
       .writeHead(200, { 'content-type': 'text/html' })
@@ -53,6 +59,19 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<vo
   }
   res.writeHead(200, { 'content-type': MIME[extname(filePath)] ?? 'application/octet-stream' });
   createReadStream(filePath).pipe(res);
+}
+
+function serveAvatar(res: ServerResponse, urlPath: string): void {
+  const file = normalize(join(avatarsDir, basename(urlPath)));
+  if (!file.startsWith(avatarsDir) || !existsSync(file)) {
+    res.writeHead(404).end('not found');
+    return;
+  }
+  res.writeHead(200, {
+    'content-type': MIME[extname(file)] ?? 'application/octet-stream',
+    'cache-control': 'public, max-age=3600',
+  });
+  createReadStream(file).pipe(res);
 }
 
 // --- HTTP + WebSocket -----------------------------------------------------

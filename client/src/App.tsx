@@ -1,11 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Profile } from '@qchat/shared';
 import type { ChatEvent } from './types.js';
-import { getProfile, getToken, login, logout, me, register, saveProfile, setToken, type AuthResult } from './api.js';
+import {
+  getProfile,
+  getToken,
+  login,
+  logout,
+  me,
+  register,
+  saveProfile,
+  setToken,
+  uploadAvatar,
+  type AuthResult,
+} from './api.js';
 import { Avatar } from './components/Avatar.js';
 import { EmojiPicker } from './components/EmojiPicker.js';
 import { LogoMark, Wordmark } from './components/Logo.js';
 import { Message } from './components/Message.js';
+import { PreferencesModal } from './components/PreferencesModal.js';
 import { ProfileModal } from './components/ProfileModal.js';
 import { useChat } from './useChat.js';
 
@@ -30,6 +42,7 @@ export default function App() {
   const [myProfile, setMyProfile] = useState<Profile | null>(null);
   const [booting, setBooting] = useState<boolean>(() => !!getToken());
   const [modal, setModal] = useState<ModalTarget | null>(null);
+  const [showPrefs, setShowPrefs] = useState(false);
   const [draft, setDraft] = useState('');
 
   // Resume a stored session on first load.
@@ -84,6 +97,15 @@ export default function App() {
     setMyProfile(p);
     setModal((m) => (m ? { ...m, profile: p } : m));
   };
+  const onUploadAvatar = async (file: File): Promise<string> => {
+    if (!token) throw new Error('Not logged in.');
+    const url = await uploadAvatar(token, file);
+    setMyProfile((p) => ({ ...(p ?? { account: state.account! }), avatar: url }));
+    setModal((m) =>
+      m ? { ...m, profile: { ...(m.profile ?? { account: m.account }), avatar: url } } : m,
+    );
+    return url;
+  };
 
   if (booting) return <Splash />;
   if (status === 'idle' || state.nick === '') {
@@ -124,9 +146,14 @@ export default function App() {
           </div>
           {state.account && <span className="chip-edit">✎</span>}
         </div>
-        <button className="auth-link" onClick={state.account ? doLogout : () => window.location.reload()}>
-          {state.account ? 'Log out' : 'Log in or sign up'}
-        </button>
+        <div className="chip-links">
+          {state.account && (
+            <button className="auth-link" onClick={() => setShowPrefs(true)}>Preferences</button>
+          )}
+          <button className="auth-link" onClick={state.account ? doLogout : () => window.location.reload()}>
+            {state.account ? 'Log out' : 'Log in or sign up'}
+          </button>
+        </div>
 
         <JoinBox onJoin={chat.join} />
 
@@ -212,8 +239,10 @@ export default function App() {
           editable={modal.editable}
           onClose={() => setModal(null)}
           onSave={modal.editable ? onSaveProfile : undefined}
+          onUploadAvatar={modal.editable ? onUploadAvatar : undefined}
         />
       )}
+      {showPrefs && token && <PreferencesModal token={token} onClose={() => setShowPrefs(false)} />}
     </div>
   );
 }

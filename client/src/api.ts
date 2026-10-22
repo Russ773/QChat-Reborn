@@ -1,4 +1,4 @@
-import type { Profile } from '@qchat/shared';
+import type { Profile, ProfilePrefs } from '@qchat/shared';
 
 const TOKEN_KEY = 'qchat_token';
 
@@ -50,8 +50,24 @@ export function login(account: string, password: string): Promise<AuthResult> {
   });
 }
 
-export function me(token: string): Promise<{ account: string; profile: Profile | null }> {
+export function me(token: string): Promise<{ account: string; profile: Profile | null; prefs: ProfilePrefs }> {
   return jreq('/api/me', { headers: authHeaders(token) });
+}
+
+export function savePreferences(token: string, patch: Partial<ProfilePrefs>): Promise<ProfilePrefs> {
+  return jreq('/api/preferences', {
+    method: 'PUT',
+    headers: jsonAuth(token),
+    body: JSON.stringify(patch),
+  }).then((d) => d.prefs);
+}
+
+export function uploadAvatar(token: string, file: File): Promise<string> {
+  return jreq('/api/avatar', {
+    method: 'POST',
+    headers: { 'content-type': file.type, ...authHeaders(token) },
+    body: file,
+  }).then((d) => d.avatar);
 }
 
 export function logout(token: string): void {

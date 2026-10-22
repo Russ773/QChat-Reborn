@@ -322,3 +322,16 @@ button.secondary:hover { background: rgba(255, 255, 255, 0.12); filter: none; }
 @media (max-width: 520px) {
   .pm-form { grid-template-columns: 1fr; }
 }
+
+/* --- Preferences ---------------------------------------------------------- */
+.chip-links { display: flex; gap: 14px; padding: 0 6px; }
+.modal-title { margin: 0 0 2px; font-size: 1.4rem; }
+.pm-avatar-edit { margin-top: -2px; }
+.prefs-modal .pref-group {
+  border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; margin-top: 14px;
+}
+.pref-legend { font-weight: 650; margin-bottom: 10px; }
+.pref-toggles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.toggle { display: flex; align-items: center; gap: 9px; cursor: pointer; font-size: 0.92rem; }
+.toggle input { width: 18px; height: 18px; accent-color: var(--green); cursor: pointer; margin: 0; }
+.pref-note { color: var(--faint); font-size: 0.82rem; margin: 10px 0 0; line-height: 1.5; }

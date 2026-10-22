@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { PROFILE_FIELDS, type Profile, type ProfileField } from '@qchat/shared';
 import { Avatar } from './Avatar.js';
 
@@ -8,6 +8,7 @@ interface Props {
   editable: boolean;
   onClose: () => void;
   onSave?: (patch: Partial<Profile>) => Promise<void>;
+  onUploadAvatar?: (file: File) => Promise<string>;
 }
 
 const FACTS: (keyof Profile)[] = [
@@ -24,12 +25,27 @@ function initForm(p: Profile | null): Record<string, string> {
   return form;
 }
 
-export function ProfileModal({ account, profile, editable, onClose, onSave }: Props) {
+export function ProfileModal({ account, profile, editable, onClose, onSave, onUploadAvatar }: Props) {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState<Record<string, string>>(() => initForm(profile));
   const [accent, setAccent] = useState(profile?.accent || '#7c8cff');
+  const [avatarUrl, setAvatarUrl] = useState<string | undefined>(profile?.avatar);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
+  const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && onUploadAvatar) {
+      setError(null);
+      try {
+        setAvatarUrl(await onUploadAvatar(file));
+      } catch (err) {
+        setError((err as Error).message);
+      }
+    }
+    if (fileRef.current) fileRef.current.value = '';
+  };
 
   const display = form.displayName || profile?.displayName || account;
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
@@ -62,7 +78,21 @@ export function ProfileModal({ account, profile, editable, onClose, onSave }: Pr
         <button className="modal-x" onClick={onClose} aria-label="Close">✕</button>
 
         <div className="pm-hero">
-          <Avatar name={account} src={profile?.avatar} size={96} className="pm-avatar" />
+          <Avatar name={account} src={avatarUrl} size={96} className="pm-avatar" />
+          {editing && onUploadAvatar && (
+            <div className="pm-avatar-edit">
+              <button type="button" className="secondary" onClick={() => fileRef.current?.click()}>
+                Change photo
+              </button>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                hidden
+                onChange={onFile}
+              />
+            </div>
+          )}
           {editing ? (
             <input
               className="pm-name-input"

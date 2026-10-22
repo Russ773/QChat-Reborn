@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 
 const serverRoot = resolve(fileURLToPath(new URL('.', import.meta.url)), '..');
-const dataDir = process.env.QCHAT_DATA_DIR ?? join(serverRoot, 'data');
+export const dataDir = process.env.QCHAT_DATA_DIR ?? join(serverRoot, 'data');
 mkdirSync(dataDir, { recursive: true });
 
 /** The single SQLite handle for the whole app. */

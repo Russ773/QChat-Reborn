@@ -53,6 +53,28 @@ export const PROFILE_FIELDS: ProfileField[] = [
   { key: 'bio', label: 'About', type: 'textarea', max: 500 },
 ];
 
+/** Fields a user can choose to show or hide on their public profile. */
+export const VISIBILITY_FIELDS: ProfileField[] = PROFILE_FIELDS.filter((f) => f.key !== 'displayName');
+
+/** A user's display + privacy preferences. */
+export interface ProfilePrefs {
+  /** Per-field visibility; a field shows unless explicitly set to false. */
+  visible: Record<string, boolean>;
+  /** Whether other users may send this user private messages. */
+  allowPm: boolean;
+  /** Whether media shared in a room autoplays for this user. */
+  autoplay: boolean;
+}
+
+export function defaultPrefs(): ProfilePrefs {
+  return { visible: {}, allowPm: true, autoplay: true };
+}
+
+/** A field is visible by default; hidden only when explicitly set to false. */
+export function fieldVisible(prefs: ProfilePrefs, field: string): boolean {
+  return prefs.visible[field] !== false;
+}
+
 /** Validate an account/nick name: 2..24 chars, letters/digits/_-[]. */
 export function validAccount(name: string): boolean {
   return /^[A-Za-z0-9_\-[\]]{2,24}$/.test(name);
