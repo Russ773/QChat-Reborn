@@ -4,7 +4,7 @@
 
 qchat.co.uk, www.qchat.co.uk {
 	encode gzip
-	reverse_proxy 127.0.0.1:8080 {
+	reverse_proxy 127.0.0.1:8300 {
 		# Overwrite, never append, the visitor address.
 		header_up X-Forwarded-For {remote_host}
 	}

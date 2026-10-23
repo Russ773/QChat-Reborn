@@ -16,11 +16,14 @@ RequestHeader set X-Forwarded-Proto "https"
 # The live chat connection (WebSocket)
 RewriteEngine On
 RewriteCond %{HTTP:Upgrade} =websocket [NC]
-RewriteRule ^/ws$ ws://127.0.0.1:8080/ws [P,L]
+RewriteRule ^/ws$ ws://127.0.0.1:8300/ws [P,L]
+
+# Let's Encrypt certificate checks are answered by Apache itself, never passed to the app
+ProxyPass /.well-known/acme-challenge !
 
 # Everything else
-ProxyPass        / http://127.0.0.1:8080/
-ProxyPassReverse / http://127.0.0.1:8080/
+ProxyPass        / http://127.0.0.1:8300/
+ProxyPassReverse / http://127.0.0.1:8300/
 
 # Apache adds the visitor's address to X-Forwarded-For by itself (ProxyAddHeaders is on by
 # default). The app reads the LAST entry, which is the one Apache added, so a forged

@@ -27,27 +27,51 @@ die()  { printf '\033[1;31mXX %s\033[0m\n' "$*"; exit 1; }
 [ -f "$SRC/server/dist/index.js" ] || die "This does not look like an unpacked QChat release (no server/dist/index.js in $SRC)."
 command -v systemctl >/dev/null 2>&1 || die "This server does not use systemd, so this script cannot set up the service."
 
-# 1. Node.js 24 (the app uses the database built into Node, which needs a recent version)
-node_major() { node -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0; }
-if [ "$(node_major)" -lt 24 ]; then
-  say "Installing Node.js 24"
-  if command -v apt-get >/dev/null 2>&1; then
-    apt-get update -y && apt-get install -y curl ca-certificates
-    curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
-    apt-get install -y nodejs
-  elif command -v dnf >/dev/null 2>&1; then
-    curl -fsSL https://rpm.nodesource.com/setup_24.x | bash -
-    dnf install -y nodejs
-  elif command -v yum >/dev/null 2>&1; then
-    curl -fsSL https://rpm.nodesource.com/setup_24.x | bash -
-    yum install -y nodejs
+# 1. Node.js 24 (the app uses the database built into Node, which needs a recent version).
+# The system's own Node is NEVER changed, because other sites on the server may depend on it.
+# If it is not 24 or newer, a private copy is kept in $NODE_DIR just for QChat.
+NODE_DIR="${NODE_DIR:-/opt/qchat-node}"
+node_major() { "$1" -p "process.versions.node.split('.')[0]" 2>/dev/null || echo 0; }
+
+install_private_node() {
+  command -v curl >/dev/null 2>&1 || die "curl is needed to download Node.js."
+  command -v xz >/dev/null 2>&1 || die "xz is needed to unpack Node.js (install the xz-utils package)."
+  local arch
+  case "$(uname -m)" in
+    x86_64) arch=x64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *) die "Unsupported processor type: $(uname -m)" ;;
+  esac
+  local base="https://nodejs.org/dist/latest-v24.x" sums file sha tmp
+  say "Downloading Node.js 24 (a private copy in $NODE_DIR)"
+  sums="$(curl -fsSL "$base/SHASUMS256.txt")" || die "Could not reach nodejs.org."
+  file="$(printf '%s\n' "$sums" | awk -v suffix="linux-$arch.tar.xz" 'length($2) >= length(suffix) && substr($2, length($2) - length(suffix) + 1) == suffix { print $2; exit }')"
+  sha="$(printf '%s\n' "$sums" | awk -v f="$file" '$2 == f { print $1 }')"
+  [ -n "$file" ] && [ -n "$sha" ] || die "Could not find a Node.js 24 download for $arch."
+  tmp="$(mktemp -d)"
+  curl -fsSL "$base/$file" -o "$tmp/$file" || die "Download failed."
+  ( cd "$tmp" && echo "$sha  $file" | sha256sum -c - >/dev/null ) || die "The Node.js download did not match its checksum. Not installing it."
+  rm -rf "$NODE_DIR"
+  mkdir -p "$NODE_DIR"
+  tar -xJf "$tmp/$file" -C "$NODE_DIR" --strip-components=1
+  rm -rf "$tmp"
+}
+
+NODE_BIN="${NODE_BIN:-}"
+if [ -z "$NODE_BIN" ]; then
+  if command -v node >/dev/null 2>&1 && [ "$(node_major "$(command -v node)")" -ge 24 ]; then
+    NODE_BIN="$(command -v node)"
+  elif [ -x "$NODE_DIR/bin/node" ] && [ "$(node_major "$NODE_DIR/bin/node")" -ge 24 ]; then
+    NODE_BIN="$NODE_DIR/bin/node"
   else
-    die "Could not install Node.js automatically. Install Node.js 24 or newer, then run this again."
+    install_private_node
+    NODE_BIN="$NODE_DIR/bin/node"
   fi
 fi
-[ "$(node_major)" -ge 24 ] || die "Node.js 24 or newer is required (found $(node -v))."
-NODE_BIN="$(command -v node)"
-say "Using Node $(node -v) at $NODE_BIN"
+[ "$(node_major "$NODE_BIN")" -ge 24 ] || die "Node.js 24 or newer is required (found $("$NODE_BIN" -v))."
+# Use this Node (and its npm) for the install step below.
+export PATH="$(dirname "$NODE_BIN"):$PATH"
+say "Using Node $("$NODE_BIN" -v) at $NODE_BIN"
 
 # 2. A user with no login and no shell, to run the app as
 if ! id "$APP_USER" >/dev/null 2>&1; then
@@ -102,7 +126,7 @@ CRON
 chmod 644 /etc/cron.d/qchat-backup
 
 # 7. Is it up?
-PORT="$(grep -E '^HTTP_PORT=' "$ENV_FILE" | tail -1 | cut -d= -f2 || true)"; PORT="${PORT:-8080}"
+PORT="$(grep -E '^HTTP_PORT=' "$ENV_FILE" | tail -1 | cut -d= -f2 || true)"; PORT="${PORT:-8300}"
 say "Checking the app answers on 127.0.0.1:$PORT"
 ok=0
 for _ in 1 2 3 4 5 6 7 8 9 10; do

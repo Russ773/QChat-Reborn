@@ -35,7 +35,7 @@ sudo bash qchat-release/deploy/install.sh
 
 The installer:
 
-* installs Node.js 24 if needed,
+* installs a private copy of Node.js 24 in `/opt/qchat-node` if the server's own Node is older (the system Node is never changed, so other sites keep working),
 * makes a `qchat` user that cannot log in,
 * puts the app in `/opt/qchat`, keeps your data in `/var/lib/qchat`, your settings in
   `/etc/qchat/qchat.env`,
@@ -43,7 +43,7 @@ The installer:
 * sets up a nightly backup at 03:30 (the newest 14 are kept in `/var/backups/qchat`),
 * checks the app answers.
 
-The app listens on `127.0.0.1:8080` only, so nobody can reach it except through your web server.
+The app listens on `127.0.0.1:8300` only, so nobody can reach it except through your web server.
 
 ## 3. Check your settings
 
@@ -54,7 +54,7 @@ Open `/etc/qchat/qchat.env` (the defaults suit qchat.co.uk):
 | `ADMIN_ACCOUNTS=Russ` | Always administrators. Register this name first. |
 | `ALLOWED_ORIGINS` | The website addresses allowed to open the chat connection. |
 | `TRUST_PROXY=1` | Use the visitor address your web server passes along. Keep it on while the app is only reachable through the proxy. |
-| `HTTP_PORT=8080` | The local port. |
+| `HTTP_PORT=8300` | The local port (8080 is avoided because control panels such as ISPConfig use it). |
 | `SESSION_IDLE_DAYS=30` | How long a login can sit unused. |
 
 After editing: `sudo systemctl restart qchat`.
@@ -88,7 +88,7 @@ subdomain), or do step 4 last.
 
 ## 6. Firewall
 
-Only ports 22 (SSH), 80 and 443 should be open to the internet. Port 8080 must not be. For example
+Only ports 22 (SSH), 80 and 443 should be open to the internet. Port 8300 must not be. For example
 with `ufw`: `ufw allow 22 && ufw allow 80 && ufw allow 443 && ufw enable`.
 
 ## Updating later
