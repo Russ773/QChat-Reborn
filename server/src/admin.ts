@@ -331,9 +331,40 @@ export async function handleAdmin(
       send(res, 200, { rooms: chat.adminRooms() });
       return true;
     }
+    if (seg.length === 1 && method === 'POST') {
+      const b = await readBody(req);
+      const name = String(b.name ?? '');
+      const err = chat.createServerRoom(name, String(b.topic ?? ''), me);
+      if (err) return deny(res, err, 422);
+      audit(me, 'create-room', name.trim().toLowerCase().replace(/^#?/, '#'), 'server room');
+      send(res, 200, { ok: true });
+      return true;
+    }
     const room = decodeURIComponent(seg[1] ?? '');
     const action = seg[2];
 
+    if (method === 'DELETE' && seg.length === 2) {
+      const err = chat.deleteServerRoom(room);
+      if (err) return deny(res, err, 409);
+      audit(me, 'delete-room', room);
+      send(res, 200, { ok: true });
+      return true;
+    }
+    if (method === 'PUT' && action === 'topic') {
+      const text = String((await readBody(req)).topic ?? '');
+      const err = chat.setRoomTopic(room, text, me);
+      if (err) return deny(res, err, 404);
+      audit(me, 'set-topic', room, text.slice(0, 80));
+      send(res, 200, { ok: true });
+      return true;
+    }
+    if (method === 'POST' && action === 'server') {
+      const err = chat.makeServerOwned(room);
+      if (err) return deny(res, err, 409);
+      audit(me, 'make-server-room', room);
+      send(res, 200, { ok: true });
+      return true;
+    }
     if (method === 'POST' && action === 'close') {
       if (!chat.closeRoom(room)) return deny(res, 'No such room.', 404);
       audit(me, 'close-room', room);

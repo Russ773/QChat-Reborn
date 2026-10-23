@@ -50,6 +50,10 @@ const ACTION_LABEL: Record<string, string> = {
   'edit-bot': 'Edited a bot',
   'delete-bot': 'Deleted a bot',
   'bot-say': 'Made a bot speak',
+  'create-room': 'Created a server room',
+  'delete-room': 'Deleted a server room',
+  'set-topic': 'Changed a room topic',
+  'make-server-room': 'Made a room server owned',
 };
 
 /** Load data once, and again whenever reload() is called. */
@@ -364,8 +368,54 @@ function Members({ token, me, notify, ask }: TabProps) {
 
 // --- Rooms -------------------------------------------------------------------------
 
+function ServerRoomEditor({ token, onClose, onCreated }: { token: string; onClose: () => void; onCreated: (name: string) => void }) {
+  const [name, setName] = useState('');
+  const [topic, setTopic] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await adminApi.createRoom(token, name, topic);
+      onCreated(name);
+      onClose();
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <form className="modal dialog" onClick={(e) => e.stopPropagation()} onSubmit={save} role="dialog" aria-label="New server room">
+        <h2 className="modal-title">New server room</h2>
+        <p className="dialog-msg">
+          A server room is kept for good and has no owner, so only administrators run it. It never expires.
+        </p>
+        <label className="dialog-field">
+          Name
+          <input autoFocus value={name} maxLength={31} onChange={(e) => setName(e.target.value)} placeholder="e.g. music" />
+        </label>
+        <label className="dialog-field">
+          Topic <span className="optional">(optional)</span>
+          <input value={topic} maxLength={200} onChange={(e) => setTopic(e.target.value)} placeholder="What is this room about?" />
+        </label>
+        {error && <p className="pm-error">{error}</p>}
+        <div className="pm-actions">
+          <button type="button" className="secondary" onClick={onClose}>Cancel</button>
+          <button type="submit" disabled={busy || !name.trim()}>{busy ? 'Creating…' : 'Create room'}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function Rooms({ token, me, notify, ask }: TabProps) {
   const rooms = useLoad<AdminRoom[]>(() => adminApi.rooms(token), [token]);
+  const [creating, setCreating] = useState(false);
   useEffect(() => {
     const iv = window.setInterval(rooms.reload, 5000);
     return () => window.clearInterval(iv);
@@ -379,6 +429,19 @@ function Rooms({ token, me, notify, ask }: TabProps) {
   return (
     <>
       <PageHead title="Rooms" sub="Every room that exists right now. Updates live." />
+      <div className="seg-actions">
+        <button onClick={() => setCreating(true)}>+ New server room</button>
+      </div>
+      {creating && (
+        <ServerRoomEditor
+          token={token}
+          onClose={() => setCreating(false)}
+          onCreated={(name) => {
+            notify(`${roomLabel(name)} was created.`);
+            rooms.reload();
+          }}
+        />
+      )}
       {rooms.error && <p className="pm-error">{rooms.error}</p>}
       {!rooms.data && <p className="muted">Loading…</p>}
       <div className="room-cards">
@@ -387,7 +450,9 @@ function Rooms({ token, me, notify, ask }: TabProps) {
             <div className="rc-head">
               <div className="rc-name">
                 {roomLabel(r.name)}
-                <span className={`pill ${r.permanent ? '' : 'user'}`}>{r.permanent ? 'built in' : 'user room'}</span>
+                <span className={`pill ${r.permanent ? '' : 'user'}`}>
+                  {r.builtin ? 'built in' : r.permanent ? 'server room' : 'user room'}
+                </span>
               </div>
               <div className="rc-count">
                 {r.members.length} here · {r.lines} saved messages
@@ -450,6 +515,63 @@ function Rooms({ token, me, notify, ask }: TabProps) {
             )}
 
             <div className="rc-actions">
+              <button
+                className="mini"
+                onClick={() =>
+                  ask({
+                    title: `Topic for ${roomLabel(r.name)}`,
+                    message: 'Everyone in the room sees the new topic straight away. Leave it empty to clear the topic.',
+                    input: { label: 'Topic', placeholder: r.topic ?? 'What is this room about?', optional: true },
+                    confirmLabel: 'Set topic',
+                    run: async (value) => {
+                      await adminApi.setRoomTopic(token, r.name, value);
+                      notify('Topic updated.');
+                      rooms.reload();
+                    },
+                  })
+                }
+              >
+                Set topic
+              </button>
+              {!r.permanent && (
+                <button
+                  className="mini"
+                  onClick={() =>
+                    ask({
+                      title: `Make ${roomLabel(r.name)} a server room?`,
+                      message: 'It is kept for good (it never expires) and has no owner, so only administrators run it.',
+                      confirmLabel: 'Make server room',
+                      run: async () => {
+                        await adminApi.makeServerRoom(token, r.name);
+                        notify(`${roomLabel(r.name)} is now a server room.`);
+                        rooms.reload();
+                      },
+                    })
+                  }
+                >
+                  Make server room
+                </button>
+              )}
+              {r.permanent && !r.builtin && (
+                <button
+                  className="mini danger"
+                  onClick={() =>
+                    ask({
+                      title: `Delete ${roomLabel(r.name)}?`,
+                      message: 'Everyone is removed and the room is deleted for good, with all of its saved messages.',
+                      confirmLabel: 'Delete room',
+                      danger: true,
+                      run: async () => {
+                        await adminApi.deleteRoom(token, r.name);
+                        notify(`${roomLabel(r.name)} was deleted.`);
+                        rooms.reload();
+                      },
+                    })
+                  }
+                >
+                  Delete room
+                </button>
+              )}
               <button
                 className="mini danger"
                 onClick={() =>
@@ -630,7 +752,7 @@ function Settings({ token, notify, ask }: TabProps) {
         />
         <Switch
           label="QBot answers commands"
-          help="Members can type !help, !time, !roll, !flip, !rooms, !about or !ping and QBot replies."
+          help="Members can type !help to see everything QBot does: dice, jokes, 8 ball, polls, reminders, the time, room topic and more."
           checked={form.qbotCommands}
           onChange={(v) => setForm({ ...form, qbotCommands: v })}
         />

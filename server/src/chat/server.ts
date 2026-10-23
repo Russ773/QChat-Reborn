@@ -20,8 +20,37 @@ import {
   type RoomRole,
   type ServerMsg,
 } from '@qchat/shared';
-import { QBOT, botInRoom, botsInRoom, claimGreeting, ensureBuiltInBots, getBot } from '../bots.js';
+import { QBOT, botInRoom, botsInRoom, claimGreeting, ensureBuiltInBots, ensureTriviaBot, getBot } from '../bots.js';
+import { PollBoard } from '../qbot-polls.js';
 import { qbotReply, welcomeText } from '../qbot.js';
+import {
+  MAX_REMIND_MS,
+  MAX_REMIND_TEXT,
+  MIN_REMIND_S,
+  STALE_MS,
+  addReminder,
+  clearReminders,
+  deleteReminder,
+  dueReminders,
+  formatDuration,
+  listReminders,
+  parseDuration,
+} from '../reminders.js';
+import {
+  CATEGORIES,
+  DEFAULT_QUESTIONS,
+  GAP_MS,
+  MAX_QUESTIONS,
+  MIN_QUESTIONS,
+  TRIVIA_BOT,
+  TriviaGame,
+  findCategory,
+  pickQuestions,
+  recordGame,
+  recordPoints,
+  scoreFor,
+  topScores,
+} from '../trivia.js';
 import { WS_LOGIN_TIMEOUT_MS } from '../security.js';
 import { UPLOAD_NAME_RE } from '../uploads.js';
 import * as store from './store.js';
@@ -57,7 +86,13 @@ export interface ChatPolicy {
   qbot: () => { welcome: boolean; commands: boolean };
 }
 
-const DEFAULT_ROOMS = ['#lobby', '#general', '#help'];
+const DEFAULT_ROOMS = ['#lobby', '#general', '#help', '#trivia'];
+const DEFAULT_TOPICS: Record<string, string> = {
+  '#lobby': 'Welcome to QChat Reborn. Say hello!',
+  '#general': 'Chat about anything.',
+  '#help': 'Stuck? Ask here and someone will help.',
+  '#trivia': 'Trivia time! Type !trivia to start a round, or !triviahelp for the rules.',
+};
 /** Cap on rooms in existence, so nobody can fill the database by spamming creates. */
 const MAX_ROOMS = 300;
 const MAX_CONNS_PER_ACCOUNT = 8;
@@ -95,7 +130,9 @@ export class ChatServer {
     private policy: ChatPolicy,
   ) {
     store.ensureBuiltInRooms(DEFAULT_ROOMS);
+    store.seedDefaultTopics(DEFAULT_TOPICS);
     ensureBuiltInBots();
+    ensureTriviaBot();
 
     // Drop dead connections.
     setInterval(() => {
@@ -121,6 +158,9 @@ export class ChatServer {
     };
     tidy();
     setInterval(tidy, 3600 * 1000).unref();
+
+    // QBot: close polls whose time is up and deliver reminders that are due.
+    setInterval(() => this.qbotSweep(), 5000).unref();
   }
 
   accept(ws: WebSocket): void {
@@ -163,7 +203,7 @@ export class ChatServer {
 
     switch (msg.t) {
       case 'join':
-        return this.onJoin(conn, msg.room, msg.restore === true);
+        return this.onJoin(conn, msg.room, msg.restore === true, msg.topic);
       case 'leave':
         return this.onLeave(conn, msg.room, 'left');
       case 'say':
@@ -231,11 +271,12 @@ export class ChatServer {
     this.sendThreads(account, conn);
     this.send(conn, { t: 'friends', ...this.friendList(account) });
     if (this.connsOf(account).length === 1) this.pushToFriends(account); // just came online
+    this.deliverReminders(account); // anything that came due while they were away
   }
 
   // --- Rooms ------------------------------------------------------------------
 
-  private onJoin(conn: Conn, roomName: string, restore = false): void {
+  private onJoin(conn: Conn, roomName: string, restore = false, topic?: string): void {
     const account = conn.account!;
     const room = normalizeRoom(roomName);
     if (!validRoom(room)) {
@@ -259,6 +300,12 @@ export class ChatServer {
       }
       row = store.createRoom(room, account);
       this.log(`room created: ${room} by ${conn.nick}`);
+      // The creator can give a brand new room its topic straight away.
+      const first = topic ? sanitize(topic).slice(0, MAX_TOPIC) : '';
+      if (first) {
+        store.setTopic(room, first, conn.nick);
+        row = store.getRoom(room)!;
+      }
     }
 
     let members = this.live.get(room);
@@ -381,28 +428,205 @@ export class ChatServer {
       this.send(c, { t: 'message', room, line });
     }
     if (!kind && !extra.image && !extra.replyTo && clean.startsWith('!')) this.qbotHears(conn, room, clean, line.id);
+    if (!kind && !extra.image) this.triviaHears(conn, room, clean, line.id);
   }
 
   private qbotCooldown = new Map<string, number>(); // account -> last command time
   private qbotRoomStamps = new Map<string, number[]>(); // room -> recent reply times
+  private polls = new PollBoard();
+  private trivia = new Map<string, TriviaGame>(); // room -> the game being played there
+  private triviaEnded = new Map<string, number>(); // room -> when its last game ended
 
-  /** QBot's second job: answer a "!" command. Limited per member and per room so it cannot be used to flood. */
+  /** A private note that only this member sees (it appears as a small pop-up). */
+  private toast(account: string, text: string): void {
+    for (const c of this.connsOf(account)) this.send(c, { t: 'info', text });
+  }
+
+  /**
+   * QBot's second job: answer "!" commands. Public answers are limited per member and per room so they
+   * cannot be used to flood. A few things (voting, listing reminders) are answered privately instead.
+   */
   private qbotHears(conn: Conn, room: string, text: string, messageId: string): void {
     if (!this.policy.qbot().commands) return;
-    const account = conn.account!.toLowerCase();
+    const m = text.match(/^!([A-Za-z0-9]+)(?:\s+([\s\S]*))?$/);
+    if (!m) return;
+    const cmd = m[1].toLowerCase();
+    const arg = (m[2] ?? '').trim();
+    const account = conn.account!;
+    const lower = account.toLowerCase();
     const now = Date.now();
-    if (now - (this.qbotCooldown.get(account) ?? 0) < 3000) return;
+
+    // Private answers: nothing is said in the room, so no limit is needed.
+    if (cmd === 'vote') return this.toast(account, this.polls.vote(room, account, arg));
+    if (cmd === 'reminders') {
+      if (arg.toLowerCase() === 'clear') {
+        const n = clearReminders(account);
+        return this.toast(account, n ? `Cleared ${n} reminder${n === 1 ? '' : 's'}.` : 'You had no reminders.');
+      }
+      const list = listReminders(account);
+      return this.toast(
+        account,
+        list.length
+          ? `Your reminders: ${list.map((r) => `in ${formatDuration(Math.max(0, r.dueAt - now))}: ${r.text}`).join('; ')}`
+          : 'You have no reminders. Set one with !remind 10m <what>.',
+      );
+    }
+
+    if (now - (this.qbotCooldown.get(lower) ?? 0) < 3000) return;
     const recent = (this.qbotRoomStamps.get(room) ?? []).filter((t) => now - t < 60_000);
     if (recent.length >= 8) return;
-    const rooms = this.roomInfos()
-      .map((r) => ({ name: r.name, online: r.members }))
-      .sort((a, b) => b.online - a.online);
-    const reply = qbotReply(text, { nick: conn.nick, rooms });
+
+    let reply: string | null;
+    switch (cmd) {
+      case 'poll':
+        reply = this.polls.start(room, account, conn.nick, arg, now);
+        break;
+      case 'results':
+        reply = this.polls.results(room);
+        break;
+      case 'endpoll':
+        reply = this.polls.end(room, account, this.rank(room, account) >= 2);
+        break;
+      case 'remind':
+        reply = this.qbotRemind(conn, room, arg, now);
+        break;
+      default: {
+        const rooms = this.roomInfos()
+          .map((r) => ({ name: r.name, online: r.members }))
+          .sort((a, b) => b.online - a.online);
+        reply = qbotReply(text, {
+          nick: conn.nick,
+          room,
+          topic: store.getRoom(room)?.topic ?? null,
+          rooms,
+          stats: { members: store.countMembers(), online: this.onlineAccounts().size, rooms: store.roomCount() },
+        });
+      }
+    }
     if (!reply) return; // not a command QBot knows: stay quiet
-    this.qbotCooldown.set(account, now);
+    this.qbotCooldown.set(lower, now);
     recent.push(now);
     this.qbotRoomStamps.set(room, recent);
-    setTimeout(() => this.botSay(QBOT, room, reply, messageId), 400);
+    setTimeout(() => this.botSay(QBOT, room, reply!, messageId), 400);
+  }
+
+  private qbotRemind(conn: Conn, room: string, arg: string, now: number): string {
+    const m = arg.match(/^(\S+)\s+([\s\S]+)$/);
+    if (!m) return 'Try !remind 10m take the pizza out (a time, then what to remind you about).';
+    const ms = parseDuration(m[1]);
+    if (ms === null) return 'I did not understand that time. Try 10m, 2h or 1h30m.';
+    if (ms < MIN_REMIND_S * 1000) return `The shortest reminder is ${MIN_REMIND_S} seconds.`;
+    if (ms > MAX_REMIND_MS) return 'The longest reminder is 7 days.';
+    const text = sanitize(m[2]).slice(0, MAX_REMIND_TEXT);
+    if (!text) return 'Tell me what to remind you about.';
+    const added = addReminder(conn.account!, conn.nick, room, now + ms, text);
+    return added.ok ? `OK ${conn.nick}, I will remind you in ${formatDuration(ms)}: ${text}` : added.error;
+  }
+
+  /** Every few seconds: close polls that have run out of time, and deliver reminders that are due. */
+  private qbotSweep(): void {
+    for (const p of this.polls.expired()) this.botSay(QBOT, p.room, p.text);
+    this.deliverReminders();
+  }
+
+  private deliverReminders(only?: string): void {
+    const now = Date.now();
+    for (const r of dueReminders(now)) {
+      if (only && r.account !== only.toLowerCase()) continue;
+      const conns = this.connsOf(r.account);
+      if (conns.length === 0) {
+        if (now - r.dueAt > STALE_MS) deleteReminder(r.id); // they never came back
+        continue;
+      }
+      if (conns.some((c) => c.rooms.has(r.room))) this.botSay(QBOT, r.room, `@${r.nick} reminder: ${r.text}`);
+      else for (const c of conns) this.send(c, { t: 'info', text: `Reminder: ${r.text}` });
+      deleteReminder(r.id);
+    }
+  }
+
+  /** TriviaBot: run the game in any room it is in, and listen for answers. */
+  private triviaHears(conn: Conn, room: string, text: string, messageId: string): void {
+    if (!botInRoom(TRIVIA_BOT, room)) return;
+    const account = conn.account!;
+    const lower = account.toLowerCase();
+    const say = (t: string) => this.botSay(TRIVIA_BOT, room, t, messageId);
+    const game = this.trivia.get(room);
+
+    const m = text.match(/^!([A-Za-z0-9]+)(?:\s+([\s\S]*))?$/);
+    if (!m) {
+      if (game) game.hear(lower, conn.nick, text); // an ordinary message might be an answer
+      return;
+    }
+    const cmd = m[1].toLowerCase();
+    const arg = (m[2] ?? '').trim();
+    const mayControl = !!game && (lower === game.starter || this.rank(room, account) >= 2);
+
+    const help =
+      'TriviaBot: !trivia starts a game of 10 questions, !trivia 5 starts 5 (3 to 20), !trivia sport picks a category (!trivia categories lists them). Type your answer in the chat. The first right answer scores 10 points plus up to 5 for speed. !trivia skip and !trivia stop are for whoever started the game and moderators. !score shows your points and !top shows the best players.';
+
+    if (cmd === 'triviahelp') return void say(help);
+    if (cmd === 'top') {
+      const rows = topScores(5);
+      return void say(
+        rows.length
+          ? `Top players: ${rows.map((r, i) => `${i + 1}. ${r.account} ${r.points} pts${r.wins ? ` (${r.wins} win${r.wins === 1 ? '' : 's'})` : ''}`).join(', ')}`
+          : 'Nobody has scored yet. Type !trivia to start the first game.',
+      );
+    }
+    if (cmd === 'score') {
+      const who = arg ? (this.policy.lookup(arg)?.account ?? null) : conn.nick;
+      if (!who) return void say(`There is no member called "${arg.slice(0, 30)}".`);
+      const s = scoreFor(who);
+      return void say(
+        s
+          ? `${s.account} has ${s.points} points (${s.correct} right answers, ${s.wins} win${s.wins === 1 ? '' : 's'} from ${s.played} game${s.played === 1 ? '' : 's'}), rank ${s.rank}.`
+          : `${who} has not scored yet. Type !trivia to play.`,
+      );
+    }
+    if (cmd !== 'trivia') return;
+
+    const sub = arg.toLowerCase();
+    if (sub === 'help') return void say(help);
+    if (sub === 'categories' || sub === 'category') {
+      return void say(`Categories: ${CATEGORIES.join(', ')}. Use !trivia <number> <category>, like !trivia 5 sport.`);
+    }
+    if (sub === 'stop' || sub === 'skip') {
+      if (!game) return void say('No game is running. Type !trivia to start one.');
+      if (!mayControl) return void say('Only the person who started the game, or a moderator, can do that.');
+      if (sub === 'stop') return game.stop(conn.nick);
+      if (!game.skip(conn.nick)) say('There is nothing to skip right now.');
+      return;
+    }
+
+    // Start a game
+    if (game) return void say('A game is already running here. Type !trivia stop to end it, or just answer the question.');
+    const cooldown = Math.min(15_000, GAP_MS * 2);
+    if (Date.now() - (this.triviaEnded.get(room) ?? 0) < cooldown) return void say('Give me a moment to catch my breath, then try again.');
+    const tokens = arg.split(/\s+/).filter(Boolean);
+    let count = DEFAULT_QUESTIONS;
+    if (tokens.length && /^\d+$/.test(tokens[0])) count = Number(tokens.shift());
+    if (count < MIN_QUESTIONS || count > MAX_QUESTIONS) return void say(`Choose between ${MIN_QUESTIONS} and ${MAX_QUESTIONS} questions.`);
+    let category: string | null = null;
+    if (tokens.length) {
+      category = findCategory(tokens.join(' '));
+      if (!category) return void say(`I do not know that category. Try: ${CATEGORIES.join(', ')}.`);
+    }
+    const g = new TriviaGame(
+      {
+        say: (t) => void this.botSay(TRIVIA_BOT, room, t),
+        alive: () => (this.live.get(room)?.size ?? 0) > 0 && !!botInRoom(TRIVIA_BOT, room),
+        award: (acct, name, points) => recordPoints(acct, name, points),
+        finish: (players, winner) => {
+          recordGame(players, winner);
+          this.trivia.delete(room);
+          this.triviaEnded.set(room, Date.now());
+        },
+      },
+      lower,
+      pickQuestions(count, category),
+    );
+    this.trivia.set(room, g);
+    g.start();
   }
 
   private onHistory(conn: Conn, roomName: string, before: number): void {
@@ -1167,6 +1391,7 @@ export class ChatServer {
     return store.allRooms().map((r) => ({
       name: r.name,
       permanent: r.permanent,
+      builtin: DEFAULT_ROOMS.includes(r.name),
       members: this.memberNicks(r.name),
       media: this.media.get(r.name) ?? null,
       lines: store.countMessages(r.name),
@@ -1254,6 +1479,50 @@ export class ChatServer {
     if (!out) return false;
     this.broadcast(room, { t: 'leaveNotice', room, nick: out, reason: 'removed by an admin' });
     return true;
+  }
+
+  /** Create a server owned room (kept for good, run by the administrators). Returns an error message, or null. */
+  createServerRoom(roomName: string, topic: string, by: string): string | null {
+    const room = normalizeRoom(roomName);
+    if (!validRoom(room)) return 'Room names can use letters, numbers, - and _ (up to 30 characters).';
+    if (store.getRoom(room)) return 'There is already a room with that name.';
+    if (store.roomCount() >= MAX_ROOMS) return 'There are too many rooms already.';
+    store.createServerRoom(room, sanitize(topic).slice(0, MAX_TOPIC) || null, by);
+    this.log(`server room created: ${room} by ${by}`);
+    return null;
+  }
+
+  /** Delete a server owned room. The built in rooms and ordinary user rooms are refused. */
+  deleteServerRoom(roomName: string): string | null {
+    const room = normalizeRoom(roomName);
+    const row = store.getRoom(room);
+    if (!row) return 'No such room.';
+    if (DEFAULT_ROOMS.includes(room)) return 'The built in rooms cannot be deleted. You can close one to clear it.';
+    if (!row.permanent) return 'That is a user room. Use Close room to remove it.';
+    this.destroyRoom(room, `${label(room)} was deleted by an administrator.`);
+    return null;
+  }
+
+  /** Make an existing room server owned: it is kept for good and has no owner. */
+  makeServerOwned(roomName: string): string | null {
+    const room = normalizeRoom(roomName);
+    const row = store.getRoom(room);
+    if (!row) return 'No such room.';
+    if (row.permanent && !row.owner) return 'That room is already server owned.';
+    store.setServerOwned(room);
+    this.broadcastPresence(room);
+    return null;
+  }
+
+  /** Set or clear a room's topic on an administrator's behalf. */
+  setRoomTopic(roomName: string, text: string, by: string): string | null {
+    const room = normalizeRoom(roomName);
+    if (!store.getRoom(room)) return 'No such room.';
+    const clean = sanitize(text).slice(0, MAX_TOPIC) || null;
+    store.setTopic(room, clean, by);
+    this.broadcast(room, { t: 'topic', room, topic: store.topicOf(store.getRoom(room)) });
+    this.broadcast(room, { t: 'system', room, text: clean ? `${by} set the topic: ${clean}` : `${by} cleared the topic` });
+    return null;
   }
 
   /** Tell every room that has people in it that its bots may have changed. */

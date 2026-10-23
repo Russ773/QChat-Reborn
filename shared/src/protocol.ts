@@ -121,7 +121,8 @@ export function youTubeId(input: string): string | null {
 export type ClientMsg =
   | { t: 'hello'; nick: string; token?: string }
   /** `restore` rejoins a remembered room quietly: never creates it, and says nothing if it is gone or you are banned. */
-  | { t: 'join'; room: string; restore?: boolean }
+  /** `topic` is only used when this join creates a brand new room. */
+  | { t: 'join'; room: string; restore?: boolean; topic?: string }
   | { t: 'leave'; room: string }
   /** `replyTo` is a message id; `image` is the name of a file you uploaded. */
   | { t: 'say'; room: string; text: string; replyTo?: string; image?: string }

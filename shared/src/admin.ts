@@ -71,7 +71,10 @@ export interface AdminUser {
 
 export interface AdminRoom {
   name: string;
+  /** Kept for good: built in, or created by an administrator as a server room. */
   permanent: boolean;
+  /** One of the rooms every QChat starts with (cannot be deleted). */
+  builtin: boolean;
   members: string[];
   media: MediaState | null;
   /** Saved messages in the room. */

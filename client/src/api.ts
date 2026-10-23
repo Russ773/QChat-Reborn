@@ -94,6 +94,11 @@ export function uploadImage(token: string, file: Blob): Promise<{ name: string; 
   });
 }
 
+/** Change your own password. Resolves when it worked, rejects with a readable message when not. */
+export async function changePassword(token: string, current: string, next: string): Promise<void> {
+  await jreq('/api/password', { method: 'POST', headers: jsonAuth(token), body: JSON.stringify({ current, next }) });
+}
+
 export function logout(token: string): void {
   fetch('/api/logout', { method: 'POST', headers: authHeaders(token) }).catch(() => {});
 }

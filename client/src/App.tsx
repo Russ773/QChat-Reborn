@@ -24,6 +24,7 @@ import { Gate } from './components/Gate.js';
 import { LogoMark, Wordmark } from './components/Logo.js';
 import { MediaPanel } from './components/MediaPanel.js';
 import { NewMessageModal } from './components/NewMessageModal.js';
+import { PasswordModal } from './components/PasswordModal.js';
 import { PreferencesModal } from './components/PreferencesModal.js';
 import { ProfileModal } from './components/ProfileModal.js';
 import { ReportModal } from './components/ReportModal.js';
@@ -62,6 +63,7 @@ export default function App() {
   const [view, setView] = useState<'chat' | 'admin'>(() => (isAdminPath() ? 'admin' : 'chat'));
   const [modal, setModal] = useState<ModalTarget | null>(null);
   const [showPrefs, setShowPrefs] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [showRooms, setShowRooms] = useState(false);
   const [showNewDm, setShowNewDm] = useState(false);
   const [showAddFriend, setShowAddFriend] = useState(false);
@@ -333,6 +335,7 @@ export default function App() {
     const items: MenuItem[] = [
       { label: 'My profile', icon: '👤', onClick: openOwnProfile },
       { label: 'Preferences', icon: '⚙️', onClick: () => setShowPrefs(true) },
+      { label: 'Change password', icon: '🔑', onClick: () => setShowPassword(true) },
     ];
     if (role === 'admin') items.push({ label: 'Admin area', icon: '🛠️', onClick: () => go('admin') });
     items.push({ kind: 'divider' }, { label: 'Log out', icon: '⏻', danger: true, onClick: doLogout });
@@ -665,6 +668,7 @@ export default function App() {
         <RoomSettingsModal
           room={room.name}
           info={state.roomAdmin && state.roomAdmin.room === room.name ? state.roomAdmin : null}
+          topic={room.topic?.text ?? ''}
           canManageMods={myRank >= 3}
           onCommand={(cmd) => {
             chat.say(room.name, cmd);
@@ -687,6 +691,7 @@ export default function App() {
       {confirm && <ConfirmModal {...confirm} />}
       {botCard && <BotModal bot={botCard} onClose={() => setBotCard(null)} />}
       {toast && <div className="toast" role="status">{toast}</div>}
+      {showPassword && token && <PasswordModal token={token} onClose={() => setShowPassword(false)} />}
       {showPrefs && token && (
         <PreferencesModal
           token={token}

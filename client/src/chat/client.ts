@@ -40,8 +40,8 @@ export class ChatClient {
     }
   }
 
-  join(room: string, restore = false): void {
-    this.send({ t: 'join', room, restore: restore || undefined });
+  join(room: string, restore = false, topic?: string): void {
+    this.send({ t: 'join', room, restore: restore || undefined, topic: topic || undefined });
   }
   leave(room: string): void {
     this.send({ t: 'leave', room });

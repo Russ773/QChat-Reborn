@@ -1,9 +1,12 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import { MAX_TOPIC } from '@qchat/shared';
 import type { RoomAdminInfo } from '../types.js';
 
 interface Props {
   room: string;
   info: RoomAdminInfo | null;
+  /** The topic as it is now. */
+  topic: string;
   /** Owners and admins can also appoint and remove moderators. */
   canManageMods: boolean;
   /** Run a room command (like "/unban Dan") and refresh. */
@@ -20,7 +23,8 @@ function until(ts: number | null): string {
 }
 
 /** Who moderates a room, who is muted and who is banned, with buttons to undo each. */
-export function RoomSettingsModal({ room, info, canManageMods, onCommand, onClose }: Props) {
+export function RoomSettingsModal({ room, info, topic, canManageMods, onCommand, onClose }: Props) {
+  const [draft, setDraft] = useState(topic);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     document.addEventListener('keydown', onKey);
@@ -32,6 +36,37 @@ export function RoomSettingsModal({ room, info, canManageMods, onCommand, onClos
       <div className="modal rs-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Room settings">
         <button className="modal-x" onClick={onClose} aria-label="Close">✕</button>
         <h2 className="modal-title">{label(room)} settings</h2>
+
+        <form
+          className="rs-section rs-topic"
+          onSubmit={(e) => {
+            e.preventDefault();
+            onCommand(draft.trim() ? `/topic ${draft.trim()}` : '/topic clear');
+          }}
+        >
+          <div className="rs-title">Topic</div>
+          <input
+            value={draft}
+            maxLength={MAX_TOPIC}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="What is this room about?"
+          />
+          <div className="rs-topic-btns">
+            <button type="submit" className="mini">Save topic</button>
+            {topic && (
+              <button
+                type="button"
+                className="mini"
+                onClick={() => {
+                  setDraft('');
+                  onCommand('/topic clear');
+                }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </form>
 
         {!info ? (
           <p className="muted">Loading…</p>

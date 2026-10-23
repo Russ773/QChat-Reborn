@@ -12,8 +12,12 @@ program with a built-in database, so there is nothing else to install.
   just for yourself, plus a bundled soundboard.
 * **Moderation:** room owners and moderators (kick, mute, ban), a report queue, and a full admin
   area with an audit log. Right-click a member for the menu.
-* **Bots:** QBot lives in every room, welcomes new members and answers `!help`, `!roll`, `!time` and
-  more. Admins can add more bots and switch QBot's jobs on and off.
+* **Bots:** QBot lives in every room, welcomes new members and answers `!help`, `!roll`, `!8ball`, `!choose`,
+  `!joke`, `!poll`, `!remind`, `!time`, `!topic`, `!stats` and more. TriviaBot runs trivia games in the trivia room
+  (`!trivia`, `!score`, `!top`). Admins can add more bots, move them between rooms, and switch QBot's jobs on and off.
+* **Rooms:** anyone can create a room and set its topic. Admins can also create server owned rooms that are kept
+  for good and run by the administrators.
+* **Accounts:** change your own password from your account menu.
 * **Security:** login throttling, hashed expiring sessions, strict browser policy. See `SECURITY.md`.
 
 ## Layout

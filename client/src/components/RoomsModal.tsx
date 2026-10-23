@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { MAX_ROOM_NAME, normalizeRoom, validRoom, type RoomInfo } from '@qchat/shared';
+import { MAX_ROOM_NAME, MAX_TOPIC, normalizeRoom, validRoom, type RoomInfo } from '@qchat/shared';
 
 interface Props {
   rooms: RoomInfo[];
   /** Rooms the user is already in. */
   joined: string[];
   onRefresh: () => void;
-  onJoin: (room: string) => void;
+  onJoin: (room: string, topic?: string) => void;
   onOpen: (room: string) => void;
   onClose: () => void;
 }
@@ -14,6 +14,7 @@ interface Props {
 export function RoomsModal({ rooms, joined, onRefresh, onJoin, onOpen, onClose }: Props) {
   const [query, setQuery] = useState('');
   const [newName, setNewName] = useState('');
+  const [newTopic, setNewTopic] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   // Keep the list fresh while the popup is open, and close on Escape.
@@ -57,7 +58,7 @@ export function RoomsModal({ rooms, joined, onRefresh, onJoin, onOpen, onClose }
       return;
     }
     if (joinedSet.has(room)) onOpen(room);
-    else onJoin(room); // joins it if it exists, creates it if not
+    else onJoin(room, newTopic.trim() || undefined); // joins it if it exists, creates it (with this topic) if not
     onClose();
   };
 
@@ -116,6 +117,13 @@ export function RoomsModal({ rooms, joined, onRefresh, onJoin, onOpen, onClose }
             />
             <button type="submit">Create</button>
           </div>
+          <input
+            className="rooms-topic-input"
+            value={newTopic}
+            onChange={(e) => setNewTopic(e.target.value)}
+            placeholder="Topic (optional), e.g. Football chat"
+            maxLength={MAX_TOPIC}
+          />
           {error && <p className="pm-error">{error}</p>}
           <p className="rooms-hint">
             You own the rooms you create and can make moderators. They stay until you delete them (type

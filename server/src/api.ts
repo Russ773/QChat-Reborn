@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { validAccount } from '@qchat/shared';
 import { handleAdmin } from './admin.js';
-import { accountForToken, createSession, getRole, login, logout, register } from './accounts.js';
+import { accountForToken, changePassword, createSession, getRole, login, logout, register } from './accounts.js';
 import { AVATAR_TYPES, MAX_AVATAR_BYTES, saveAvatar } from './avatars.js';
 import type { ChatServer } from './chat/server.js';
 import * as store from './chat/store.js';
@@ -16,6 +16,7 @@ import {
   loginFailsByAccount,
   loginFailsByIp,
   loginFailsByPair,
+  passwordChangeFails,
   signupsByIp,
   signupsGlobal,
   waitMessage,
@@ -96,6 +97,32 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, chat:
         role: r.role,
         profile: getProfile(r.account!),
       });
+    }
+    return true;
+  }
+
+  if (path === '/api/password' && method === 'POST') {
+    const token = bearer(req);
+    const acct = accountForToken(token);
+    if (!acct) {
+      send(res, 401, { error: 'Not logged in.' });
+      return true;
+    }
+    const key = acct.toLowerCase();
+    const wait = passwordChangeFails.wait(key);
+    if (wait > 0) return tooMany(res, wait);
+    const b = await readBody(req);
+    const r = changePassword(acct, String(b.current ?? ''), String(b.next ?? ''), token);
+    if (!r.ok) {
+      if (r.status === 403) {
+        passwordChangeFails.hit(key);
+        console.log(`[qchat] wrong current password on a password change for "${forLog(acct)}" from ${forLog(ip)}`);
+      }
+      send(res, r.status, { error: r.error });
+    } else {
+      passwordChangeFails.reset(key);
+      console.log(`[qchat] ${forLog(acct)} changed their password`);
+      send(res, 200, { ok: true });
     }
     return true;
   }

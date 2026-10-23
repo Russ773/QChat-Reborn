@@ -60,6 +60,20 @@ export function botNameTaken(name: string): boolean {
   return !!db.prepare('SELECT 1 FROM bots WHERE nameLower = ?').get(name.trim().toLowerCase());
 }
 
+/**
+ * TriviaBot, the second bot, lives in the trivia room. It is added once; after that it is an ordinary
+ * bot an administrator can move to other rooms, switch off or delete, and it stays gone if deleted.
+ */
+export function ensureTriviaBot(): void {
+  if (db.prepare("SELECT 1 FROM settings WHERE key = 'triviaBotSeeded'").get()) return;
+  db.prepare(
+    `INSERT OR IGNORE INTO bots (nameLower, name, description, emoji, builtin, enabled, allRooms, createdBy, createdAt)
+     VALUES ('triviabot', 'TriviaBot', 'Runs trivia games. Type !trivia in a room it is in to play, or !triviahelp for the rules.', '🧠', 0, 1, 0, 'system', ?)`,
+  ).run(Date.now());
+  db.prepare("INSERT OR IGNORE INTO bot_rooms (botLower, room) VALUES ('triviabot', '#trivia')").run();
+  db.prepare("INSERT INTO settings (key, value) VALUES ('triviaBotSeeded', 'true')").run();
+}
+
 /** True the first time it is called for a member (and never again): they have not been welcomed yet. */
 export function claimGreeting(account: string): boolean {
   const r = db.prepare('INSERT OR IGNORE INTO bot_greeted (accountLower, ts) VALUES (?, ?)').run(account.toLowerCase(), Date.now());

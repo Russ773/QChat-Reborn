@@ -44,6 +44,12 @@ export const adminApi = {
 
   rooms: (t: string): Promise<AdminRoom[]> => get(t, 'rooms').then((d) => d.rooms),
   closeRoom: (t: string, room: string) => post(t, `rooms/${enc(room)}/close`),
+  createRoom: (t: string, name: string, topic: string) => post(t, 'rooms', { name, topic }),
+  deleteRoom: (t: string, room: string) =>
+    jreq(`/api/admin/rooms/${enc(room)}`, { method: 'DELETE', headers: authHeaders(t) }),
+  setRoomTopic: (t: string, room: string, topic: string) =>
+    jreq(`/api/admin/rooms/${enc(room)}/topic`, { method: 'PUT', headers: jsonAuth(t), body: JSON.stringify({ topic }) }),
+  makeServerRoom: (t: string, room: string) => post(t, `rooms/${enc(room)}/server`),
   stopMedia: (t: string, room: string) => post(t, `rooms/${enc(room)}/stopmedia`),
   kick: (t: string, room: string, nick: string) => post(t, `rooms/${enc(room)}/kick`, { nick }),
 

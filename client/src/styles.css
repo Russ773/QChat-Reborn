@@ -885,3 +885,8 @@ button.profile-chip:hover { filter: none; transform: none; }
 .check-row input { width: auto; }
 .room-pick { max-height: 160px; overflow-y: auto; padding: 8px 10px; margin-bottom: 10px; border-radius: 12px; background: rgba(0, 0, 0, 0.2); }
 .bot-editor { max-height: 90vh; overflow-y: auto; }
+
+/* --- Wave 5: topic fields ---------------------------------------------------------- */
+.rs-topic input { width: 100%; }
+.rs-topic-btns { display: flex; gap: 6px; margin-top: 8px; }
+.rooms-topic-input { width: 100%; margin-top: 8px; }

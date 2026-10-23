@@ -93,6 +93,8 @@ const HOUR = 60 * MIN;
 export const loginFailsByPair = new Limiter(6, 15 * MIN);
 export const loginFailsByIp = new Limiter(30, 15 * MIN);
 export const loginFailsByAccount = new Limiter(40, HOUR);
+/** Wrong "current password" tries on the change-password screen (someone using a stolen login). */
+export const passwordChangeFails = new Limiter(5, 15 * MIN);
 /** New accounts: per address, and across the whole site. */
 export const signupsByIp = new Limiter(5, HOUR);
 export const signupsGlobal = new Limiter(200, HOUR);
@@ -106,7 +108,7 @@ export const MAX_WS_PER_IP = RATE_LIMITS_ON ? 60 : 100000;
 export const WS_LOGIN_TIMEOUT_MS = 15_000;
 
 setInterval(() => {
-  for (const l of [loginFailsByPair, loginFailsByIp, loginFailsByAccount, signupsByIp, signupsGlobal, apiByIp, wsOpensByIp]) l.sweep();
+  for (const l of [loginFailsByPair, loginFailsByIp, loginFailsByAccount, passwordChangeFails, signupsByIp, signupsGlobal, apiByIp, wsOpensByIp]) l.sweep();
 }, 5 * MIN).unref();
 
 export function waitMessage(ms: number): string {

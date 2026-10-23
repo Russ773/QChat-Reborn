@@ -39,6 +39,10 @@ export function allRooms(): RoomRow[] {
   return (db.prepare('SELECT * FROM rooms ORDER BY name').all() as unknown as RawRoom[]).map(toRoom);
 }
 
+export function countMembers(): number {
+  return (db.prepare('SELECT COUNT(*) AS n FROM accounts').get() as { n: number }).n;
+}
+
 export function roomCount(): number {
   return (db.prepare('SELECT COUNT(*) AS n FROM rooms').get() as { n: number }).n;
 }
@@ -60,6 +64,27 @@ export function topicOf(room: RoomRow | undefined): RoomTopic | null {
 export function setTopic(name: string, text: string | null, by: string): void {
   db.prepare('UPDATE rooms SET topic = ?, topicBy = ?, topicAt = ? WHERE name = ?')
     .run(text, text ? by : null, text ? now() : null, name);
+}
+
+/** A server owned room: kept for good, no owner (administrators run it), optionally with a topic. */
+export function createServerRoom(name: string, topic: string | null, by: string): RoomRow {
+  db.prepare('INSERT INTO rooms (name, owner, permanent, createdAt, lastActive) VALUES (?, NULL, 1, ?, ?)').run(name, now(), now());
+  if (topic) setTopic(name, topic, by);
+  return getRoom(name)!;
+}
+
+/** Turn an existing room into a server owned one. */
+export function setServerOwned(name: string): void {
+  db.prepare('UPDATE rooms SET owner = NULL, permanent = 1 WHERE name = ?').run(name);
+}
+
+/** Give the built in rooms their starting topics, once (so a topic an admin later clears stays cleared). */
+export function seedDefaultTopics(topics: Record<string, string>): void {
+  if (db.prepare("SELECT 1 FROM settings WHERE key = 'defaultTopicsSeeded'").get()) return;
+  for (const [name, text] of Object.entries(topics)) {
+    db.prepare('UPDATE rooms SET topic = ?, topicBy = ?, topicAt = ? WHERE name = ? AND topic IS NULL').run(text, 'QChat', now(), name);
+  }
+  db.prepare("INSERT INTO settings (key, value) VALUES ('defaultTopicsSeeded', 'true')").run();
 }
 
 /** Delete a room and everything attached to it. */

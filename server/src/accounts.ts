@@ -162,6 +162,28 @@ export function endSessions(account: string): void {
   db.prepare('DELETE FROM sessions WHERE accountLower = ?').run(account.toLowerCase());
 }
 
+export type PasswordChange = { ok: true } | { ok: false; status: number; error: string };
+
+/**
+ * Change your own password. You must give the current one. Every other device is logged out
+ * (only the login in `keepToken` stays), so a stolen login stops working.
+ */
+export function changePassword(account: string, current: string, next: string, keepToken?: string): PasswordChange {
+  const lower = account.toLowerCase();
+  const row = db.prepare('SELECT account, passHash FROM accounts WHERE accountLower = ?').get(lower) as
+    | { account: string; passHash: string }
+    | undefined;
+  if (!row || !verifyPassword(current, row.passHash)) {
+    return { ok: false, status: 403, error: 'Your current password is not right.' };
+  }
+  if (next === current) return { ok: false, status: 422, error: 'Your new password must be different from your current one.' };
+  const weak = passwordProblem(next, row.account);
+  if (weak) return { ok: false, status: 422, error: weak };
+  db.prepare('UPDATE accounts SET passHash = ? WHERE accountLower = ?').run(hashPassword(next), lower);
+  db.prepare('DELETE FROM sessions WHERE accountLower = ? AND tokenHash != ?').run(lower, keepToken ? hashToken(keepToken) : '');
+  return { ok: true };
+}
+
 // --- Roles + admin account management ------------------------------------------
 
 export function getRole(account: string): 'admin' | 'user' | null {

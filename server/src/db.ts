@@ -228,6 +228,27 @@ db.exec(`
     ts           INTEGER NOT NULL
   );
 
+  -- QBot reminders (saved, so a restart does not lose them).
+  CREATE TABLE IF NOT EXISTS reminders (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    accountLower TEXT NOT NULL,
+    nick         TEXT NOT NULL,
+    room         TEXT NOT NULL,
+    dueAt        INTEGER NOT NULL,
+    text         TEXT NOT NULL,
+    createdAt    INTEGER NOT NULL
+  );
+
+  -- TriviaBot's scores, kept for good.
+  CREATE TABLE IF NOT EXISTS trivia_scores (
+    accountLower TEXT PRIMARY KEY,
+    account      TEXT NOT NULL,
+    points       INTEGER NOT NULL DEFAULT 0,
+    correct      INTEGER NOT NULL DEFAULT 0,
+    wins         INTEGER NOT NULL DEFAULT 0,
+    played       INTEGER NOT NULL DEFAULT 0
+  );
+
   -- Pictures members have uploaded.
   CREATE TABLE IF NOT EXISTS uploads (
     name       TEXT PRIMARY KEY,

@@ -375,7 +375,7 @@ export interface UseChat {
   status: ChatStatus;
   connect: (nick: string, token?: string | null) => void;
   reconnect: () => void;
-  join: (room: string) => void;
+  join: (room: string, topic?: string) => void;
   leave: (room: string) => void;
   say: (room: string, text: string, extra?: { replyTo?: string; image?: string }) => void;
   react: (room: string, id: string, emoji: string) => void;
@@ -482,7 +482,7 @@ export function useChat(): UseChat {
 
   useEffect(() => () => clientRef.current?.close(), []);
 
-  const join = useCallback((room: string) => clientRef.current?.join(room), []);
+  const join = useCallback((room: string, topic?: string) => clientRef.current?.join(room, false, topic), []);
   const leave = useCallback((room: string) => clientRef.current?.leave(room), []);
   const say = useCallback(
     (room: string, text: string, extra?: { replyTo?: string; image?: string }) => clientRef.current?.say(room, text, extra),
