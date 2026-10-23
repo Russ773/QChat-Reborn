@@ -203,10 +203,15 @@ export default function App() {
   /** Open this chat in its own small window, so it stays in view while you browse elsewhere. */
   const openPopout = () => {
     // No "noopener": the new window copies this window's login, so you do not sign in again.
+    // A roomy window (about 1260 x 780) that fits on smaller screens, a little in from the top left of this one.
+    const width = Math.min(1260, Math.max(520, window.screen.availWidth - 120));
+    const height = Math.min(780, Math.max(480, window.screen.availHeight - 160));
+    const left = Math.round(window.screenX + 40);
+    const top = Math.round(window.screenY + 40);
     const w = window.open(
       `/?popout=1&focus=${encodeURIComponent(state.active ?? '')}`,
       'qchat-popout',
-      'popup=yes,width=440,height=740',
+      `popup=yes,width=${width},height=${height},left=${left},top=${top}`,
     );
     if (w) w.focus();
     else setToast('Your browser blocked the pop-out window. Allow pop-ups for this site, then try again.');
