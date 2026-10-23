@@ -1,7 +1,8 @@
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { validAccount } from '@qchat/shared';
 import { botNameTaken } from './bots.js';
-import { db } from './db.js';
+import { db, hashToken } from './db.js';
+import { SESSION_IDLE_MS, SESSION_MAX_MS, passwordProblem } from './security.js';
 import { getSettings } from './settings.js';
 
 function hashPassword(pw: string): string {
@@ -57,9 +58,8 @@ export function register(account: string, email: string, password: string): Regi
   if (!validAccount(account)) {
     return { ok: false, status: 422, error: 'Username must be 2 to 24 letters, numbers, _ or -.' };
   }
-  if (password.length < 6) {
-    return { ok: false, status: 422, error: 'Password must be at least 6 characters.' };
-  }
+  const weak = passwordProblem(password, account);
+  if (weak) return { ok: false, status: 422, error: weak };
   const lower = account.toLowerCase();
   const listedAdmin = envAdmins().includes(lower);
   // Closing registration never locks out accounts the owner listed as admins.
@@ -92,12 +92,16 @@ export interface LoginResult {
   status?: number;
 }
 
+// A real-looking hash to check against when the account does not exist.
+const DUMMY_HASH = hashPassword('qchat-timing-equaliser');
+
 export function login(account: string, password: string): LoginResult {
   const row = db
     .prepare('SELECT account, passHash, role, suspended, suspendedReason FROM accounts WHERE accountLower = ?')
     .get(account.trim().toLowerCase()) as
     | { account: string; passHash: string; role: 'admin' | 'user'; suspended: number; suspendedReason: string | null }
     | undefined;
+  if (!row) verifyPassword(password, DUMMY_HASH);
   if (!row || !verifyPassword(password, row.passHash)) {
     return { ok: false, status: 401, error: 'Wrong username or password.' };
   }
@@ -116,24 +120,42 @@ export function login(account: string, password: string): LoginResult {
 
 export function createSession(account: string): string {
   const token = randomBytes(32).toString('hex');
-  db.prepare('INSERT INTO sessions (token, accountLower, createdAt) VALUES (?,?,?)')
-    .run(token, account.toLowerCase(), Date.now());
+  const now = Date.now();
+  // Only the hash is stored; the token itself goes to the browser and nowhere else.
+  db.prepare('INSERT INTO sessions (tokenHash, accountLower, createdAt, lastUsed) VALUES (?,?,?,?)')
+    .run(hashToken(token), account.toLowerCase(), now, now);
   return token;
+}
+
+/** Remove logins that have lapsed (unused for too long, or older than the absolute limit). */
+export function pruneSessions(): number {
+  const now = Date.now();
+  const r = db.prepare('DELETE FROM sessions WHERE lastUsed < ? OR createdAt < ?').run(now - SESSION_IDLE_MS, now - SESSION_MAX_MS);
+  return Number(r.changes);
 }
 
 /** The account for a session token, or null (suspended accounts never resolve). */
 export function accountForToken(token: string | undefined): string | null {
   if (!token) return null;
+  const hash = hashToken(token);
+  const now = Date.now();
   const row = db
     .prepare(
-      'SELECT a.account AS account FROM sessions s JOIN accounts a ON a.accountLower = s.accountLower WHERE s.token = ? AND a.suspended = 0',
+      `SELECT a.account AS account, s.lastUsed AS lastUsed FROM sessions s
+       JOIN accounts a ON a.accountLower = s.accountLower
+       WHERE s.tokenHash = ? AND a.suspended = 0 AND s.lastUsed >= ? AND s.createdAt >= ?`,
     )
-    .get(token) as { account: string } | undefined;
-  return row ? row.account : null;
+    .get(hash, now - SESSION_IDLE_MS, now - SESSION_MAX_MS) as { account: string; lastUsed: number } | undefined;
+  if (!row) return null;
+  // Using a login keeps it alive, but write to the database only now and then.
+  if (now - row.lastUsed > Math.min(3600_000, SESSION_IDLE_MS / 4)) {
+    db.prepare('UPDATE sessions SET lastUsed = ? WHERE tokenHash = ?').run(now, hash);
+  }
+  return row.account;
 }
 
 export function logout(token: string | undefined): void {
-  if (token) db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+  if (token) db.prepare('DELETE FROM sessions WHERE tokenHash = ?').run(hashToken(token));
 }
 
 export function endSessions(account: string): void {

@@ -157,7 +157,7 @@ export function Gate({ onAuthed, notice }: Props) {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   autoComplete={signupMode ? 'new-password' : 'current-password'}
-                  placeholder={signupMode ? 'At least 6 characters' : 'Your password'}
+                  placeholder={signupMode ? 'At least 8 characters' : 'Your password'}
                 />
               </label>
 

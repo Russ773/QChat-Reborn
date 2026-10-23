@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -9,6 +10,20 @@ mkdirSync(dataDir, { recursive: true });
 
 /** The single SQLite handle for the whole app. */
 export const db = new DatabaseSync(join(dataDir, 'qchat.db'));
+
+/** What we store for a login token: a one-way hash, so a copy of the database cannot be used to log in. */
+export const hashToken = (token: string): string => createHash('sha256').update(token).digest('hex');
+
+// Logins used to be stored as the raw token. If this database still has that older table,
+// set those rows aside now, and carry them over (hashed) once the new table exists.
+let oldSessions: { token: string; accountLower: string; createdAt: number }[] = [];
+{
+  const cols = db.prepare('PRAGMA table_info(sessions)').all() as { name: string }[];
+  if (cols.length > 0 && !cols.some((c) => c.name === 'tokenHash')) {
+    oldSessions = db.prepare('SELECT token, accountLower, createdAt FROM sessions').all() as typeof oldSessions;
+    db.exec('DROP TABLE sessions');
+  }
+}
 
 db.exec(`
   PRAGMA journal_mode = WAL;
@@ -47,10 +62,12 @@ db.exec(`
     updatedAt    INTEGER NOT NULL
   );
 
+  -- Only a hash of each login token is kept. lastUsed makes idle logins lapse.
   CREATE TABLE IF NOT EXISTS sessions (
-    token        TEXT PRIMARY KEY,
+    tokenHash    TEXT PRIMARY KEY,
     accountLower TEXT NOT NULL,
-    createdAt    INTEGER NOT NULL
+    createdAt    INTEGER NOT NULL,
+    lastUsed     INTEGER NOT NULL
   );
 
   CREATE TABLE IF NOT EXISTS settings (
@@ -213,6 +230,12 @@ db.exec(`
     size       INTEGER NOT NULL
   );
 `);
+
+// Carry over logins from the older table, so nobody is logged out by the upgrade.
+for (const o of oldSessions) {
+  db.prepare('INSERT OR IGNORE INTO sessions (tokenHash, accountLower, createdAt, lastUsed) VALUES (?,?,?,?)')
+    .run(hashToken(o.token), o.accountLower, o.createdAt, Date.now());
+}
 
 /** Add a column to an existing table if an older database lacks it. */
 function addColumn(table: string, column: string, ddl: string): void {

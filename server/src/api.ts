@@ -9,12 +9,36 @@ import { bearer, readBody, readRawBody, send } from './httpUtil.js';
 import { MAX_UPLOAD_BYTES, UPLOAD_LIMIT, UPLOAD_WINDOW, saveUploadFile, sniffImage } from './uploads.js';
 import { getPrefs, getProfile, publicProfile, saveProfile, savePrefs, setAvatar } from './profiles.js';
 import { getSettings } from './settings.js';
+import {
+  apiByIp,
+  clientIp,
+  forLog,
+  loginFailsByAccount,
+  loginFailsByIp,
+  loginFailsByPair,
+  signupsByIp,
+  signupsGlobal,
+  waitMessage,
+} from './security.js';
+
+/** Refuse a request politely when someone has tried too often. */
+function tooMany(res: ServerResponse, waitMs: number): true {
+  res.setHeader('retry-after', String(Math.max(1, Math.ceil(waitMs / 1000))));
+  send(res, 429, { error: waitMessage(waitMs) });
+  return true;
+}
 
 /** Handle /api/* routes. Returns true if the request was handled. */
 export async function handleApi(req: IncomingMessage, res: ServerResponse, chat: ChatServer): Promise<boolean> {
   const [path, query = ''] = (req.url ?? '').split('?');
   if (!path.startsWith('/api/')) return false;
   const method = req.method ?? 'GET';
+  const ip = clientIp(req);
+
+  // One address cannot hammer the API, and nothing here should ever be cached by a browser or proxy.
+  const apiWait = apiByIp.hit(ip);
+  if (apiWait > 0) return tooMany(res, apiWait);
+  res.setHeader('cache-control', 'no-store');
 
   if (path.startsWith('/api/admin/')) return handleAdmin(req, res, path, query, chat);
 
@@ -26,11 +50,15 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, chat:
   }
 
   if (path === '/api/register' && method === 'POST') {
+    const wait = Math.max(signupsByIp.wait(ip), signupsGlobal.wait('site'));
+    if (wait > 0) return tooMany(res, wait);
     const b = await readBody(req);
     const r = register(String(b.account ?? ''), String(b.email ?? ''), String(b.password ?? ''));
     if (!r.ok) {
       send(res, r.status ?? 422, { error: r.error });
     } else {
+      signupsByIp.hit(ip);
+      signupsGlobal.hit('site');
       send(res, 200, {
         token: createSession(r.account!),
         account: r.account,
@@ -43,7 +71,22 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, chat:
 
   if (path === '/api/login' && method === 'POST') {
     const b = await readBody(req);
+    const name = String(b.account ?? '').trim().toLowerCase().slice(0, 40);
+    const pair = `${ip}|${name}`;
+    // Guessing passwords is slowed down per person at one address, per address, and per account.
+    const wait = Math.max(loginFailsByPair.wait(pair), loginFailsByIp.wait(ip), loginFailsByAccount.wait(name));
+    if (wait > 0) {
+      console.log(`[qchat] login blocked (too many failures) for "${forLog(name)}" from ${forLog(ip)}`);
+      return tooMany(res, wait);
+    }
     const r = login(String(b.account ?? ''), String(b.password ?? ''));
+    if (!r.ok && r.status === 401) {
+      loginFailsByPair.hit(pair);
+      loginFailsByIp.hit(ip);
+      loginFailsByAccount.hit(name);
+      console.log(`[qchat] failed login for "${forLog(name)}" from ${forLog(ip)}`);
+    }
+    if (r.ok) loginFailsByPair.reset(pair);
     if (!r.ok) {
       send(res, r.status ?? 401, { error: r.error });
     } else {

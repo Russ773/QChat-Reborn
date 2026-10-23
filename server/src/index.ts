@@ -1,13 +1,14 @@
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { basename, extname, join, normalize, resolve } from 'node:path';
+import { basename, extname, join, normalize, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { accountForToken, ensureAdmins, isAdmin, lookupAccount } from './accounts.js';
+import { accountForToken, ensureAdmins, isAdmin, lookupAccount, pruneSessions } from './accounts.js';
 import { avatarsDir } from './avatars.js';
 import { handleApi } from './api.js';
 import { ChatServer } from './chat/server.js';
 import { getPrefs } from './profiles.js';
+import { MAX_WS_PER_IP, clientIp, originAllowed, securityHeaders, wsOpensByIp } from './security.js';
 import { getSettings } from './settings.js';
 import { UPLOAD_MIME, UPLOAD_NAME_RE, uploadsDir } from './uploads.js';
 
@@ -44,6 +45,9 @@ const MIME: Record<string, string> = {
 };
 
 async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  // Every response, including errors, carries the browser security headers. A route that
+  // sets one of these itself (the uploads, which need a stricter policy) simply overrides it.
+  for (const [name, value] of Object.entries(securityHeaders(req))) res.setHeader(name, value);
   if (req.url === '/healthz') {
     res.writeHead(200, { 'content-type': 'text/plain' }).end('ok');
     return;
@@ -66,20 +70,24 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<vo
   }
   const urlPath = decodeURIComponent((req.url ?? '/').split('?')[0]);
   let filePath = normalize(join(clientDir, urlPath));
-  if (!filePath.startsWith(clientDir)) {
+  if (filePath !== clientDir && !filePath.startsWith(clientDir + sep)) {
     res.writeHead(403).end('Forbidden');
     return;
   }
   if (!existsSync(filePath) || statSync(filePath).isDirectory()) {
     filePath = join(clientDir, 'index.html'); // SPA fallback
   }
-  res.writeHead(200, { 'content-type': MIME[extname(filePath)] ?? 'application/octet-stream' });
+  res.writeHead(200, {
+    'content-type': MIME[extname(filePath)] ?? 'application/octet-stream',
+    // Built files have a fingerprint in their name, so they can be kept for good; the page itself must be re-checked.
+    'cache-control': filePath.startsWith(join(clientDir, 'assets') + sep) ? 'public, max-age=31536000, immutable' : 'no-cache',
+  });
   createReadStream(filePath).pipe(res);
 }
 
 function serveAvatar(res: ServerResponse, urlPath: string): void {
   const file = normalize(join(avatarsDir, basename(urlPath)));
-  if (!file.startsWith(avatarsDir) || !existsSync(file)) {
+  if (!file.startsWith(avatarsDir + sep) || !existsSync(file)) {
     res.writeHead(404).end('not found');
     return;
   }
@@ -117,12 +125,45 @@ const http = createServer((req, res) => {
 });
 // A chat message is at most 2000 characters; 16 KB leaves plenty of room for the
 // envelope and refuses anything absurd before it is parsed.
-const wss = new WebSocketServer({ server: http, path: '/ws', maxPayload: 16 * 1024 });
+const wss = new WebSocketServer({
+  server: http,
+  path: '/ws',
+  maxPayload: 16 * 1024,
+  // Only our own pages may open a socket from a browser.
+  verifyClient: (info, done) => {
+    const ok = originAllowed(info.origin, info.req);
+    if (!ok) log(`ws refused: origin ${info.origin ?? '(none)'} not allowed`);
+    done(ok, 403, 'Forbidden');
+  },
+});
 
-wss.on('connection', (ws) => {
-  log('ws connection');
+const openByIp = new Map<string, number>();
+
+wss.on('connection', (ws, req) => {
+  const ip = clientIp(req);
+  // One address cannot open sockets without end.
+  const open = openByIp.get(ip) ?? 0;
+  if (open >= MAX_WS_PER_IP || wsOpensByIp.hit(ip) > 0) {
+    log(`ws refused: too many connections from ${ip}`);
+    ws.close(1013, 'Too many connections');
+    return;
+  }
+  openByIp.set(ip, open + 1);
+  ws.on('close', () => {
+    const left = (openByIp.get(ip) ?? 1) - 1;
+    if (left > 0) openByIp.set(ip, left);
+    else openByIp.delete(ip);
+  });
   chat.accept(ws);
 });
+
+// Logins that nobody has used for a long time lapse.
+const prune = () => {
+  const n = pruneSessions();
+  if (n > 0) log(`removed ${n} lapsed login(s)`);
+};
+prune();
+setInterval(prune, 3600 * 1000).unref();
 
 http.listen(HTTP_PORT, () => log(`listening on :${HTTP_PORT} (ws path /ws)`));
 

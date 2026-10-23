@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-/** A compact, curated set of common emoji — no external dependency needed. */
+/** A compact, curated set of common emoji, with no external dependency needed. */
 const EMOJIS = [
   '😀', '😁', '😂', '🤣', '😊', '😍', '😎', '😉',
   '🙂', '😅', '😇', '🤔', '😐', '😴', '😭', '😤',

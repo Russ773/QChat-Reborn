@@ -21,6 +21,7 @@ import {
   type ServerMsg,
 } from '@qchat/shared';
 import { botInRoom, botsInRoom, ensureBuiltInBots, getBot } from '../bots.js';
+import { WS_LOGIN_TIMEOUT_MS } from '../security.js';
 import { UPLOAD_NAME_RE } from '../uploads.js';
 import * as store from './store.js';
 
@@ -139,7 +140,14 @@ export class ChatServer {
       if (msg) this.handle(conn, msg);
     });
     ws.on('pong', () => (conn.alive = true));
-    ws.on('close', () => this.disconnect(conn));
+    ws.on('close', () => {
+      clearTimeout(loginTimer);
+      this.disconnect(conn);
+    });
+    // A connection that never logs in is not kept open.
+    const loginTimer = setTimeout(() => {
+      if (!conn.account) ws.close(4001, 'Login required');
+    }, WS_LOGIN_TIMEOUT_MS);
     ws.on('error', () => this.disconnect(conn));
   }
 

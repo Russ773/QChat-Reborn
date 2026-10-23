@@ -17,6 +17,7 @@ import type { ChatServer } from './chat/server.js';
 import { getReport, listReports, openReportCount, purgeAccount, resolveReport } from './chat/store.js';
 import { db } from './db.js';
 import { bearer, readBody, send } from './httpUtil.js';
+import { passwordProblem } from './security.js';
 import { getSettings, saveSettings } from './settings.js';
 import { removeUploadFiles } from './uploads.js';
 
@@ -297,7 +298,8 @@ export async function handleAdmin(
 
     if (method === 'POST' && action === 'password') {
       const password = String((await readBody(req)).password ?? '');
-      if (password.length < 6) return deny(res, 'Password must be at least 6 characters.', 422);
+      const weak = passwordProblem(password, target);
+      if (weak) return deny(res, weak, 422);
       setPassword(target, password);
       chat.kickAccount(target, 'Your password was changed. Please log in again.');
       audit(me, 'reset-password', target);
