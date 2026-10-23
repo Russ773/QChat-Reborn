@@ -2,17 +2,26 @@ import type { Profile, ProfilePrefs } from '@qchat/shared';
 
 const TOKEN_KEY = 'qchat_token';
 
+// Your login lives only as long as this browser window or tab. Closing it signs you out, so when
+// you come back you sign in again. (A reload keeps you signed in, and a pop-out opened from here
+// inherits the login.) Older versions kept it for good, so remove any that is still lying around.
+try {
+  localStorage.removeItem(TOKEN_KEY);
+} catch {
+  /* ignore */
+}
+
 export function getToken(): string | null {
   try {
-    return localStorage.getItem(TOKEN_KEY);
+    return sessionStorage.getItem(TOKEN_KEY);
   } catch {
     return null;
   }
 }
 export function setToken(token: string | null): void {
   try {
-    if (token) localStorage.setItem(TOKEN_KEY, token);
-    else localStorage.removeItem(TOKEN_KEY);
+    if (token) sessionStorage.setItem(TOKEN_KEY, token);
+    else sessionStorage.removeItem(TOKEN_KEY);
   } catch {
     /* ignore */
   }

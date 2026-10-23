@@ -86,6 +86,12 @@ export interface ChatPolicy {
   qbot: () => { welcome: boolean; commands: boolean };
 }
 
+/**
+ * How long to wait before telling a room someone "left chat" after their window closes. A page reload comes
+ * straight back, and should not be announced as a leave and a join.
+ */
+const LEAVE_GRACE_MS = Number.isFinite(Number(process.env.QCHAT_LEAVE_GRACE_MS)) && process.env.QCHAT_LEAVE_GRACE_MS !== undefined && process.env.QCHAT_LEAVE_GRACE_MS !== '' ? Number(process.env.QCHAT_LEAVE_GRACE_MS) : 4000;
+
 const DEFAULT_ROOMS = ['#lobby', '#general', '#help', '#trivia'];
 const DEFAULT_TOPICS: Record<string, string> = {
   '#lobby': 'Welcome to QChat Reborn. Say hello!',
@@ -120,6 +126,8 @@ const label = (room: string) => room.replace(/^#/, '');
  */
 export class ChatServer {
   private conns = new Map<string, Conn>();
+  /** room|account -> a "left chat" announcement waiting out the grace period. */
+  private pendingLeaves = new Map<string, ReturnType<typeof setTimeout>>();
   /** Live membership: room -> connection ids. Rooms themselves live in the database. */
   private live = new Map<string, Set<string>>();
   private media = new Map<string, MediaState>(); // room -> current synced media
@@ -317,7 +325,15 @@ export class ChatServer {
     if (joinedNow) {
       members.add(conn.id);
       conn.rooms.add(room);
-      this.broadcast(room, { t: 'joinNotice', room, nick: conn.nick }, conn.id);
+      // Coming straight back (a page reload) or opening a second window is not announced again.
+      const key = `${room}|${account.toLowerCase()}`;
+      const waiting = this.pendingLeaves.get(key);
+      if (waiting) {
+        clearTimeout(waiting);
+        this.pendingLeaves.delete(key);
+      } else if (!this.connsOf(account).some((c) => c.id !== conn.id && c.rooms.has(room))) {
+        this.broadcast(room, { t: 'joinNotice', room, nick: conn.nick }, conn.id);
+      }
     }
     store.touchRoom(room);
 
@@ -357,7 +373,10 @@ export class ChatServer {
     members.delete(conn.id);
     conn.rooms.delete(room);
     this.send(conn, { t: 'left', room });
-    this.broadcast(room, { t: 'leaveNotice', room, nick: conn.nick, reason });
+    // Still in this room in another window? Then they have not left it.
+    if (!this.connsOf(conn.account ?? '').some((c) => c.id !== conn.id && c.rooms.has(room))) {
+      this.broadcast(room, { t: 'leaveNotice', room, nick: conn.nick, reason });
+    }
     this.broadcastPresence(room);
   }
 
@@ -366,8 +385,26 @@ export class ChatServer {
     this.conns.delete(conn.id);
     for (const room of conn.rooms) {
       this.live.get(room)?.delete(conn.id);
-      this.broadcast(room, { t: 'leaveNotice', room, nick: conn.nick, reason: 'disconnected' });
       this.broadcastPresence(room);
+      const account = conn.account;
+      if (!account) continue;
+      if (this.connsOf(account).some((c) => c.rooms.has(room))) continue; // still here in another window
+      // Tell the room they left chat, after a moment, so that a reload is not announced.
+      const key = `${room}|${account.toLowerCase()}`;
+      const nick = conn.nick;
+      clearTimeout(this.pendingLeaves.get(key));
+      const announce = () => {
+        this.pendingLeaves.delete(key);
+        if (this.connsOf(account).some((c) => c.rooms.has(room))) return;
+        this.broadcast(room, { t: 'leaveNotice', room, nick, reason: 'disconnected' });
+      };
+      if (LEAVE_GRACE_MS <= 0) {
+        announce();
+      } else {
+        const timer = setTimeout(announce, LEAVE_GRACE_MS);
+        timer.unref?.();
+        this.pendingLeaves.set(key, timer);
+      }
     }
     if (conn.account && this.connsOf(conn.account).length === 0) this.pushToFriends(conn.account); // went offline
   }

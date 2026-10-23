@@ -8,7 +8,7 @@ do when you put it on the internet.
 | Area | Protection |
 | --- | --- |
 | Passwords | scrypt with a random salt per password. At least 8 characters, no common passwords, not the same as the username. |
-| Logins | Stored only as a SHA-256 hash, so a copy of the database cannot be used to log in. A login lapses after 30 days unused and never lasts more than 90 days. Logging out, suspending, resetting a password or deleting an account ends them. |
+| Logins | Kept by the browser only for as long as the window or tab stays open (closing it signs you out), and stored on the server only as a SHA-256 hash, so a copy of the database cannot be used to log in. A login lapses after 30 days unused and never lasts more than 90 days. Logging out, suspending, resetting a password or deleting an account ends them. |
 | Guessing passwords | 6 wrong tries per person per address, 30 per address, 40 per account, each per window (15 minutes, 15 minutes, 1 hour). Even the right password is refused while blocked. A success clears the personal count. |
 | Fake accounts | 5 new accounts per address per hour, 200 per hour for the whole site. |
 | Request floods | 600 API calls a minute per address. 40 new chat connections a minute and 60 open at once per address. A connection that does not log in within 15 seconds is dropped. |

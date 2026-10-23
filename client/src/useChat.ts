@@ -299,8 +299,16 @@ function reducer(state: AppState, action: Action): AppState {
       return pushEvent(state, msg.room, makeEvent('join', `${msg.nick} joined`, msg.nick));
 
     case 'leaveNotice': {
-      const why = msg.reason ? ` (${msg.reason})` : '';
-      return pushEvent(state, msg.room, makeEvent('part', `${msg.nick} left${why}`, msg.nick));
+      // Closing the window or losing the connection reads "left chat"; leaving a room says so; anything else keeps its reason.
+      const text =
+        msg.reason === 'disconnected'
+          ? `${msg.nick} left chat`
+          : msg.reason === 'left'
+            ? `${msg.nick} left the room`
+            : msg.reason
+              ? `${msg.nick} left (${msg.reason})`
+              : `${msg.nick} left`;
+      return pushEvent(state, msg.room, makeEvent('part', text, msg.nick));
     }
 
     // --- Private messages ---

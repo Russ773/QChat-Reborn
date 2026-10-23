@@ -17,7 +17,8 @@ program with a built-in database, so there is nothing else to install.
   (`!trivia`, `!score`, `!top`). Admins can add more bots, move them between rooms, and switch QBot's jobs on and off.
 * **Rooms:** anyone can create a room and set its topic. Admins can also create server owned rooms that are kept
   for good and run by the administrators.
-* **Accounts:** change your own password from your account menu.
+* **Accounts:** change your own password from your account menu. You stay signed in until you close the browser window, then sign in again.
+* **Pop-out chat:** the pop-out button next to search opens the current room or private chat in its own small window, so it stays in view while you browse elsewhere. The layout also adapts to narrow screens.
 * **Security:** login throttling, hashed expiring sessions, strict browser policy. See `SECURITY.md`.
 
 ## Layout

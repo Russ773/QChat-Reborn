@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BotInfo, Profile, RoomRole } from '@qchat/shared';
 import { dmKey, isDmKey, type ChatEvent } from './types.js';
 import {
@@ -45,6 +45,10 @@ interface ModalTarget {
   allowPm: boolean;
 }
 
+/** Opened as its own small window ("pop-out chat")? Then it also says which room or chat to show first. */
+const POPOUT = new URLSearchParams(window.location.search).get('popout') === '1';
+const POPOUT_FOCUS = new URLSearchParams(window.location.search).get('focus') ?? '';
+
 const isAdminPath = () => window.location.pathname.replace(/\/+$/, '') === '/admin';
 const roomLabel = (name: string) => name.replace(/^#/, '');
 const roleRank = (r?: RoomRole) => (r === 'admin' ? 4 : r === 'owner' ? 3 : r === 'mod' ? 2 : 0);
@@ -69,6 +73,9 @@ export default function App() {
   const [showAddFriend, setShowAddFriend] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [searching, setSearching] = useState(false);
+  // On a narrow screen (a phone, or the pop-out) the menu and the member list slide in over the chat.
+  const [drawer, setDrawer] = useState<'menu' | 'members' | null>(null);
+  const focused = useRef(false);
   const [reporting, setReporting] = useState<{ room: string; msg: ChatEvent } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
@@ -96,6 +103,7 @@ export default function App() {
   useEffect(() => {
     setSearching(false);
     setShowSettings(false);
+    setDrawer(null);
   }, [state.active]);
 
   // Surface server messages (bad room name, "friend request sent"...) as a short toast.
@@ -128,8 +136,22 @@ export default function App() {
   const unreadMentions = Object.values(state.rooms).reduce((n, r) => n + r.mentions, 0);
   const attention = unreadDms + unreadMentions + state.requests.incoming.length;
   useEffect(() => {
-    document.title = attention > 0 ? `(${attention}) QChat Reborn` : 'QChat Reborn';
-  }, [attention]);
+    const where = POPOUT && state.active ? `${state.active.replace(/^[#@]/, '')} | ` : '';
+    document.title = attention > 0 ? `(${attention}) ${where}QChat Reborn` : `${where}QChat Reborn`;
+  }, [attention, state.active]);
+
+  // A pop-out window opens on the room or private chat it was launched from.
+  useEffect(() => {
+    if (!POPOUT || focused.current || state.status !== 'online' || !POPOUT_FOCUS) return;
+    if (POPOUT_FOCUS.startsWith('@')) {
+      focused.current = true;
+      chat.openDm(POPOUT_FOCUS.slice(1));
+    } else if (state.rooms[POPOUT_FOCUS]) {
+      focused.current = true;
+      chat.setActive(POPOUT_FOCUS);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.status, state.rooms]);
 
   // Show your own photo wherever your name appears.
   useEffect(() => {
@@ -176,6 +198,18 @@ export default function App() {
     if (token) logout(token);
     setToken(null);
     window.location.assign('/');
+  };
+
+  /** Open this chat in its own small window, so it stays in view while you browse elsewhere. */
+  const openPopout = () => {
+    // No "noopener": the new window copies this window's login, so you do not sign in again.
+    const w = window.open(
+      `/?popout=1&focus=${encodeURIComponent(state.active ?? '')}`,
+      'qchat-popout',
+      'popup=yes,width=440,height=740',
+    );
+    if (w) w.focus();
+    else setToast('Your browser blocked the pop-out window. Allow pop-ups for this site, then try again.');
   };
 
   const openOwnProfile = () => {
@@ -359,7 +393,8 @@ export default function App() {
         </div>
       )}
 
-      <aside className="sidebar">
+      <div className={`drawer-backdrop ${drawer ? 'show' : ''}`} onClick={() => setDrawer(null)} />
+      <aside className={`sidebar ${drawer === 'menu' ? 'open' : ''}`}>
         <div className="brand">
           <LogoMark size={30} />
           <Wordmark />
@@ -456,6 +491,7 @@ export default function App() {
         {room ? (
           <>
             <header className="chan-head">
+              <button className="head-btn narrow-only" aria-label="Menu" title="Menu: your rooms, messages and friends" onClick={() => setDrawer((d) => (d === 'menu' ? null : 'menu'))}>☰</button>
               <div className="chan-title">
                 <span className="chan-name">{roomLabel(room.name)}</span>
                 <span className="chan-meta">{room.members.length} online</span>
@@ -466,6 +502,10 @@ export default function App() {
                 )}
               </div>
               <div className="chan-actions">
+                <button className="head-btn narrow-only" aria-label="Members" title="Who is here" onClick={() => setDrawer((d) => (d === 'members' ? null : 'members'))}>👥</button>
+                {!POPOUT && (
+                  <button className="head-btn" title="Open this chat in its own small window" aria-label="Pop out chat" onClick={openPopout}>⧉</button>
+                )}
                 <button
                   className={`head-btn ${searching ? 'active' : ''}`}
                   title="Search this room"
@@ -544,7 +584,7 @@ export default function App() {
                   },
                 }}
               />
-              <aside className="right-rail">
+              <aside className={`right-rail ${drawer === 'members' ? 'open' : ''}`}>
                 <MembersPanel
                   members={room.members}
                   roles={room.roles}
@@ -561,6 +601,7 @@ export default function App() {
         ) : dm ? (
           <>
             <header className="chan-head">
+              <button className="head-btn narrow-only" aria-label="Menu" title="Menu: your rooms, messages and friends" onClick={() => setDrawer((d) => (d === 'menu' ? null : 'menu'))}>☰</button>
               <div className="chan-title">
                 <button className="dm-head" onClick={() => openMember(dm.with)} title="View profile">
                   <Avatar name={dm.with} src={avatarFor(dm.with)} size={34} />
@@ -568,6 +609,11 @@ export default function App() {
                 </button>
                 <span className="chan-meta">private chat</span>
               </div>
+              {!POPOUT && (
+                <div className="chan-actions">
+                  <button className="head-btn" title="Open this chat in its own small window" aria-label="Pop out chat" onClick={openPopout}>⧉</button>
+                </div>
+              )}
             </header>
             <div className="content">
               <Conversation
@@ -593,6 +639,7 @@ export default function App() {
         ) : (
           <>
             <header className="chan-head">
+              <button className="head-btn narrow-only" aria-label="Menu" title="Menu: your rooms, messages and friends" onClick={() => setDrawer((d) => (d === 'menu' ? null : 'menu'))}>☰</button>
               <div className="chan-title">
                 <span className="chan-name">Welcome</span>
               </div>
