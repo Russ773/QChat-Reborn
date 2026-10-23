@@ -76,8 +76,8 @@ export class ChatClient {
   playYouTube(room: string, ref: string, title?: string): void {
     this.send({ t: 'playYouTube', room, ref, title });
   }
-  mediaControl(room: string, op: 'pause' | 'resume' | 'seek' | 'stop', pos?: number): void {
-    this.send({ t: 'mediaControl', room, op, pos });
+  mediaControl(room: string, op: 'pause' | 'resume' | 'seek' | 'stop' | 'ended', pos?: number, ref?: string): void {
+    this.send({ t: 'mediaControl', room, op, pos, ref });
   }
   playSound(room: string, sound: string): void {
     this.send({ t: 'playSound', room, sound });

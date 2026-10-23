@@ -145,7 +145,8 @@ export type ClientMsg =
   | { t: 'dmTyping'; to: string }
   | { t: 'listDms' }
   | { t: 'playYouTube'; room: string; ref: string; title?: string }
-  | { t: 'mediaControl'; room: string; op: 'pause' | 'resume' | 'seek' | 'stop'; pos?: number }
+  /** `ended` says the video finished; `ref` names the video, so a late report about an earlier one is ignored. */
+  | { t: 'mediaControl'; room: string; op: 'pause' | 'resume' | 'seek' | 'stop' | 'ended'; pos?: number; ref?: string }
   | { t: 'playSound'; room: string; sound: string }
   | { t: 'listRooms' }
   | { t: 'ping' };

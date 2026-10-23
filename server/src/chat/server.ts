@@ -255,7 +255,7 @@ export class ChatServer {
       case 'playYouTube':
         return this.onPlayYouTube(conn, msg.room, msg.ref, msg.title);
       case 'mediaControl':
-        return this.onMediaControl(conn, msg.room, msg.op, msg.pos);
+        return this.onMediaControl(conn, msg.room, msg.op, msg.pos, msg.ref);
       case 'playSound':
         return this.onPlaySound(conn, msg.room, msg.sound);
       case 'listRooms':
@@ -1265,14 +1265,23 @@ export class ChatServer {
   private onMediaControl(
     conn: Conn,
     roomName: string,
-    op: 'pause' | 'resume' | 'seek' | 'stop',
+    op: 'pause' | 'resume' | 'seek' | 'stop' | 'ended',
     pos?: number,
+    ref?: string,
   ): void {
     const room = normalizeRoom(roomName);
     if (!this.inRoom(conn, room)) return;
     const state = this.media.get(room);
-    if (!state) return;
+    if (!state) return; // already cleared (several watchers report the end at the same moment)
     const now = Date.now();
+    if (op === 'ended') {
+      // The video ran to its end. Only about the video that is playing, and never within the first seconds.
+      if (ref !== state.ref || state.paused || now - state.startedAt < 3000) return;
+      this.media.delete(room);
+      this.broadcast(room, { t: 'media', room, state: null });
+      this.broadcast(room, { t: 'system', room, text: 'The video has finished' });
+      return;
+    }
     if (op === 'stop') {
       this.media.delete(room);
       this.broadcast(room, { t: 'media', room, state: null });

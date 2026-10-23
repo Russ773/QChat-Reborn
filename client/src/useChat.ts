@@ -398,7 +398,7 @@ export interface UseChat {
   setActive: (key: string) => void;
   playSound: (room: string, sound: string) => void;
   playYouTube: (room: string, ref: string, title?: string) => void;
-  mediaControl: (room: string, op: 'pause' | 'resume' | 'seek' | 'stop', pos?: number) => void;
+  mediaControl: (room: string, op: 'pause' | 'resume' | 'seek' | 'stop' | 'ended', pos?: number, ref?: string) => void;
   listRooms: () => void;
   dismissAnnouncement: () => void;
   loadEarlier: (key: string) => void;
@@ -514,7 +514,8 @@ export function useChat(): UseChat {
     [],
   );
   const mediaControl = useCallback(
-    (room: string, op: 'pause' | 'resume' | 'seek' | 'stop', pos?: number) => clientRef.current?.mediaControl(room, op, pos),
+    (room: string, op: 'pause' | 'resume' | 'seek' | 'stop' | 'ended', pos?: number, ref?: string) =>
+      clientRef.current?.mediaControl(room, op, pos, ref),
     [],
   );
 

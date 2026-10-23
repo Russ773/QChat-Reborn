@@ -543,7 +543,7 @@ export default function App() {
               roomMedia={room.media}
               autoplay={autoplay}
               onPlayRoom={(ref) => chat.playYouTube(room.name, ref)}
-              onControlRoom={(op, pos) => chat.mediaControl(room.name, op, pos)}
+              onControlRoom={(op, pos) => chat.mediaControl(room.name, op, pos, room.media?.ref)}
             />
             {searching && (
               <SearchPanel

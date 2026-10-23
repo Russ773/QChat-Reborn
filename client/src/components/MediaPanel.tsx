@@ -6,7 +6,7 @@ interface Props {
   roomMedia: MediaState | null;
   autoplay: boolean;
   onPlayRoom: (ref: string) => void;
-  onControlRoom: (op: 'pause' | 'resume' | 'seek' | 'stop', pos?: number) => void;
+  onControlRoom: (op: 'pause' | 'resume' | 'seek' | 'stop' | 'ended', pos?: number) => void;
 }
 
 export function MediaPanel({ roomMedia, autoplay, onPlayRoom, onControlRoom }: Props) {

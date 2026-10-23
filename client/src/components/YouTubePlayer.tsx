@@ -35,7 +35,7 @@ interface Props {
   sync?: MediaState | null;
   autoplay?: boolean;
   /** Report user-driven control changes back (room mode). */
-  onControl?: (op: 'pause' | 'resume' | 'seek' | 'stop', pos?: number) => void;
+  onControl?: (op: 'pause' | 'resume' | 'seek' | 'stop' | 'ended', pos?: number) => void;
 }
 
 export function YouTubePlayer({ videoId, sync, autoplay = true, onControl }: Props) {
@@ -47,6 +47,8 @@ export function YouTubePlayer({ videoId, sync, autoplay = true, onControl }: Pro
   const ignoreUntil = useRef(0);
   const settleTimer = useRef<number | null>(null);
   const unloading = useRef(false);
+  // Which playing of which video we have already reported as finished (so it is said once).
+  const endedFor = useRef<string | null>(null);
   const syncRef = useRef(sync);
   syncRef.current = sync;
   const autoplayRef = useRef(autoplay);
@@ -130,6 +132,17 @@ export function YouTubePlayer({ videoId, sync, autoplay = true, onControl }: Pro
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [!!sync]);
 
+  /** Tell the room this video has finished, once. The server then clears it for everyone. */
+  function reportEnded() {
+    const s = syncRef.current;
+    const ctl = onControlRef.current;
+    if (!s || !ctl) return;
+    const key = `${s.ref}:${s.startedAt}`;
+    if (endedFor.current === key) return;
+    endedFor.current = key;
+    ctl('ended');
+  }
+
   function applySync(driftOnly = false) {
     const p = playerRef.current;
     const s = syncRef.current;
@@ -147,6 +160,22 @@ export function YouTubePlayer({ videoId, sync, autoplay = true, onControl }: Pro
       state = p.getPlayerState();
     } catch {
       /* ignore */
+    }
+    // A video that has run its course is over. Never seek past its end or press play again: that is
+    // what made a finished video start over, play a few seconds, and be dragged back to the end, forever.
+    let duration = 0;
+    try {
+      duration = p.getDuration?.() || 0;
+    } catch {
+      /* ignore */
+    }
+    if (!s.paused && duration > 0 && target >= duration - 0.5) {
+      reportEnded();
+      return;
+    }
+    if (state === YT?.PlayerState?.ENDED) {
+      reportEnded();
+      return;
     }
     // Only seek when we are properly out of sync; a loose threshold avoids
     // fighting normal buffering jitter (and seeks while still loading).
@@ -177,7 +206,12 @@ export function YouTubePlayer({ videoId, sync, autoplay = true, onControl }: Pro
    */
   function onPlayerState(e: any) {
     const YT = (window as any).YT;
-    if (!onControlRef.current || !YT) return;
+    if (!YT) return;
+    if (e.data === YT.PlayerState.ENDED) {
+      reportEnded();
+      return;
+    }
+    if (!onControlRef.current) return;
     if (e.data !== YT.PlayerState.PAUSED && e.data !== YT.PlayerState.PLAYING) return;
     if (Date.now() < ignoreUntil.current) return;
     if (settleTimer.current) window.clearTimeout(settleTimer.current);
