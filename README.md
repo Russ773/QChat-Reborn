@@ -1,58 +1,47 @@
-# QChat — Reborn
+# QChat Reborn
 
-A web chatroom with a **bundled IRC backend** and **synchronized media playback**
-(watch-party style). Chat runs over real IRC; sharing a link starts a shared,
-server-synced player that everyone in the channel watches together.
+Media Webchat, Reborn. A real-time chat site with rooms, private messages, friends, a shared
+YouTube player, a soundboard, picture sharing, and an admin area. It runs as one small Node.js
+program with a built-in database, so there is nothing else to install.
 
-## Architecture
+## What is in it
+
+* **Chat:** rooms you can create and own, saved history and search, replies, reactions, pictures,
+  private messages, friends, mentions, desktop notifications, slash commands.
+* **Media:** paste a YouTube link and play it to the whole room (kept in sync for late joiners) or
+  just for yourself, plus a bundled soundboard.
+* **Moderation:** room owners and moderators (kick, mute, ban), a report queue, and a full admin
+  area with an audit log. Right-click a member for the menu.
+* **Bots:** QBot lives in every room, welcomes new members and answers `!help`, `!roll`, `!time` and
+  more. Admins can add more bots and switch QBot's jobs on and off.
+* **Security:** login throttling, hashed expiring sessions, strict browser policy. See `SECURITY.md`.
+
+## Layout
 
 ```
-shared/   TypeScript protocol: IRC line parser + media event types (used by both sides)
-server/   Node/TS. Own IRC daemon (TCP :6667 + WebSocket /irc) + media-sync coordinator
-client/   React + Vite. IRC-over-WebSocket client, chat UI, synchronized media player
+shared/   Types and the message protocol used by both sides
+server/   Node.js: web server, WebSocket chat, database, admin API
+client/   React + Vite: the website
+deploy/   Everything needed to put it on a server
+web/      The original landing page
+heritage/ Artwork recovered from the old qchat.co.uk (reference only)
 ```
 
-- **Own IRC server** — a compact IRCd (`server/src/ircd`) implementing
-  NICK/USER/JOIN/PART/PRIVMSG/NOTICE/NAMES/WHO/LIST/QUIT plus IRCv3 message tags.
-  It listens on raw **TCP 6667** (so real IRC clients can connect too) and on a
-  **WebSocket** at `/irc` (so browsers connect directly).
-- **Media sync** rides on top of IRC via a custom `MEDIA` command whose payload
-  is a JSON event. The server is authoritative: clients send intents
-  (enqueue/play/pause/seek/skip/remove) and the server broadcasts a normalized
-  playback snapshot so late-joiners and drifting clients reconcile. Non-media
-  IRC clients still see a plain-text "shared a video: <url>" fallback.
+## Run it on your own computer
 
-## Getting started
+You need Node.js 24 or newer.
 
 ```bash
 npm install
-npm run dev
+npm run build
+ADMIN_ACCOUNTS=YourName npm start
 ```
 
-- Client (Vite): http://localhost:5173
-- Server: HTTP+WS on :8080, raw IRC on :6667
+Then open http://localhost:8080 and create the account named in `ADMIN_ACCOUNTS`. It becomes the
+administrator. Data is kept in `server/data/`.
 
-`npm run dev` builds `shared/` once, then runs all three workspaces in watch mode.
-The Vite dev server proxies the `/irc` WebSocket to the backend.
+For development with live reload: `npm run dev` (site on http://localhost:5173).
 
-## Two backend modes
+## Put it on the internet
 
-- **Bundled ircd** (default, local dev): the Node server *is* the IRC server.
-- **Gateway** (production against a real IRCd): set `IRC_UPSTREAM_HOST` and the
-  server bridges each browser WebSocket to your InspIRCd/UnrealIRCd over TCP/TLS,
-  keeping the `MEDIA` watch-party overlay server-side. See **[DEPLOYMENT.md](DEPLOYMENT.md)**.
-
-## Production build
-
-```bash
-npm run build   # builds shared, server, and client
-npm start       # serves the built client from the Node server on :8080
-```
-
-## Ports & env
-
-| Var               | Default       | Purpose                     |
-| ----------------- | ------------- | --------------------------- |
-| `HTTP_PORT`       | `8080`        | HTTP + WebSocket (`/irc`)   |
-| `IRC_TCP_PORT`    | `6667`        | Raw IRC for native clients  |
-| `IRC_SERVER_NAME` | `qchat.local` | Server name in IRC prefixes |
+See `DEPLOYMENT.md`. For the security side, see `SECURITY.md`.

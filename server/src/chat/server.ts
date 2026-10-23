@@ -20,7 +20,8 @@ import {
   type RoomRole,
   type ServerMsg,
 } from '@qchat/shared';
-import { botInRoom, botsInRoom, ensureBuiltInBots, getBot } from '../bots.js';
+import { QBOT, botInRoom, botsInRoom, claimGreeting, ensureBuiltInBots, getBot } from '../bots.js';
+import { qbotReply, welcomeText } from '../qbot.js';
 import { WS_LOGIN_TIMEOUT_MS } from '../security.js';
 import { UPLOAD_NAME_RE } from '../uploads.js';
 import * as store from './store.js';
@@ -52,6 +53,8 @@ export interface ChatPolicy {
   lookup: (name: string) => { account: string; createdAt: number } | null;
   /** Whether a member accepts private messages. */
   allowsPm: (account: string) => boolean;
+  /** Which of QBot's jobs are switched on. */
+  qbot: () => { welcome: boolean; commands: boolean };
 }
 
 const DEFAULT_ROOMS = ['#lobby', '#general', '#help'];
@@ -288,6 +291,16 @@ export class ChatServer {
     if (media) this.send(conn, { t: 'media', room, state: media });
     const welcome = this.policy.welcome();
     if (welcome && joinedNow) this.send(conn, { t: 'system', room, text: welcome });
+    // QBot's first job: welcome a member the first time they ever join a room (never on a quiet rejoin).
+    // They only count as welcomed once the welcome is really sent, so leaving straight away loses nothing.
+    if (joinedNow && !restore && this.policy.qbot().welcome) {
+      const nick = conn.nick;
+      setTimeout(() => {
+        if (this.live.get(room)?.has(conn.id) && this.policy.qbot().welcome && claimGreeting(account)) {
+          this.botSay(QBOT, room, welcomeText(nick));
+        }
+      }, 1500);
+    }
   }
 
   private onLeave(conn: Conn, roomName: string, reason: string): void {
@@ -367,6 +380,29 @@ export class ChatServer {
       if (this.blocksFor(c.account.toLowerCase()).has(sender)) continue; // they blocked the sender
       this.send(c, { t: 'message', room, line });
     }
+    if (!kind && !extra.image && !extra.replyTo && clean.startsWith('!')) this.qbotHears(conn, room, clean, line.id);
+  }
+
+  private qbotCooldown = new Map<string, number>(); // account -> last command time
+  private qbotRoomStamps = new Map<string, number[]>(); // room -> recent reply times
+
+  /** QBot's second job: answer a "!" command. Limited per member and per room so it cannot be used to flood. */
+  private qbotHears(conn: Conn, room: string, text: string, messageId: string): void {
+    if (!this.policy.qbot().commands) return;
+    const account = conn.account!.toLowerCase();
+    const now = Date.now();
+    if (now - (this.qbotCooldown.get(account) ?? 0) < 3000) return;
+    const recent = (this.qbotRoomStamps.get(room) ?? []).filter((t) => now - t < 60_000);
+    if (recent.length >= 8) return;
+    const rooms = this.roomInfos()
+      .map((r) => ({ name: r.name, online: r.members }))
+      .sort((a, b) => b.online - a.online);
+    const reply = qbotReply(text, { nick: conn.nick, rooms });
+    if (!reply) return; // not a command QBot knows: stay quiet
+    this.qbotCooldown.set(account, now);
+    recent.push(now);
+    this.qbotRoomStamps.set(room, recent);
+    setTimeout(() => this.botSay(QBOT, room, reply, messageId), 400);
   }
 
   private onHistory(conn: Conn, roomName: string, before: number): void {
@@ -1229,14 +1265,14 @@ export class ChatServer {
    * Make a bot say something in a room it is in. Returns an error message, or null when sent.
    * This is also how bots will act later: everything a bot does goes through here.
    */
-  botSay(botName: string, roomName: string, text: string): string | null {
+  botSay(botName: string, roomName: string, text: string, replyTo?: string): string | null {
     const room = normalizeRoom(roomName);
     const bot = botInRoom(botName, room);
     if (!bot) return `${botName} is not in ${label(room)}.`;
     if (!store.getRoom(room)) return 'There is no such room.';
     const clean = sanitize(text);
     if (!clean) return 'Write something for the bot to say.';
-    const line = store.addMessage(room, bot.name, 'bot', clean);
+    const line = store.addMessage(room, bot.name, 'bot', clean, replyTo ? { replyTo } : {});
     store.touchRoom(room);
     this.broadcast(room, { t: 'message', room, line });
     return null;

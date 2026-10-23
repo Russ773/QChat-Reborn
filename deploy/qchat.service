@@ -1,0 +1,32 @@
+[Unit]
+Description=QChat Reborn
+After=network.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__APP_DIR__/server
+EnvironmentFile=/etc/qchat/qchat.env
+Environment=QCHAT_DATA_DIR=__DATA_DIR__
+ExecStart=__NODE__ __APP_DIR__/server/dist/index.js
+Restart=always
+RestartSec=3
+
+# Lock the service down: it can write to its data folder and nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=__DATA_DIR__
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictNamespaces=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

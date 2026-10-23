@@ -440,7 +440,10 @@ export function useChat(): UseChat {
       const now = stateRef.current.order;
       const saved = loadSavedRooms(stateRef.current.account ?? state.nick);
       const rooms = now.length ? now : saved.length ? saved : [DEFAULT_ROOM];
-      for (const r of rooms) clientRef.current?.join(r, true);
+      // A brand new member starts in the lobby with a normal join (so QBot can welcome them);
+      // everything remembered is rejoined quietly.
+      const firstVisit = now.length === 0 && saved.length === 0;
+      for (const r of rooms) clientRef.current?.join(r, !firstVisit);
       persistRooms.current = true;
       requestedDm.current.clear();
     }

@@ -1,0 +1,32 @@
+# QChat Reborn behind Apache (for example a Virtualmin server).
+#
+# One time, enable the modules:
+#   a2enmod proxy proxy_http proxy_wstunnel rewrite headers ssl
+#   (on Red Hat style systems they are usually on already)
+#
+# Put the lines below inside the HTTPS virtual host for qchat.co.uk (<VirtualHost *:443>).
+# In Virtualmin: Server Configuration > Edit Proxy Website, or "Edit Apache Directives".
+# Then check and reload:  apachectl configtest && systemctl reload apache2   (or httpd)
+
+# Keep the real host name, so the chat connection's origin check passes.
+ProxyPreserveHost On
+# Tell the app the visitor is on HTTPS (so it sends the HSTS header).
+RequestHeader set X-Forwarded-Proto "https"
+
+# The live chat connection (WebSocket)
+RewriteEngine On
+RewriteCond %{HTTP:Upgrade} =websocket [NC]
+RewriteRule ^/ws$ ws://127.0.0.1:8080/ws [P,L]
+
+# Everything else
+ProxyPass        / http://127.0.0.1:8080/
+ProxyPassReverse / http://127.0.0.1:8080/
+
+# Apache adds the visitor's address to X-Forwarded-For by itself (ProxyAddHeaders is on by
+# default). The app reads the LAST entry, which is the one Apache added, so a forged
+# header from a visitor is ignored.
+
+# --- And in the plain HTTP virtual host (<VirtualHost *:80>), send everyone to https: ---
+#   RewriteEngine On
+#   RewriteCond %{HTTPS} off
+#   RewriteRule ^/?(.*)$ https://%{HTTP_HOST}/$1 [R=301,L]

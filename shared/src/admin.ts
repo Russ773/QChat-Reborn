@@ -8,12 +8,18 @@ export interface SiteSettings {
   maintenance: boolean;
   /** A line shown to everyone as they join a room (empty for none). */
   welcomeMessage: string;
+  /** QBot welcomes members the first time they join a room. */
+  qbotWelcome: boolean;
+  /** QBot answers ! commands such as !help and !roll. */
+  qbotCommands: boolean;
 }
 
 export const DEFAULT_SETTINGS: SiteSettings = {
   registrationOpen: true,
   maintenance: false,
   welcomeMessage: '',
+  qbotWelcome: true,
+  qbotCommands: true,
 };
 
 export const MAX_WELCOME = 300;

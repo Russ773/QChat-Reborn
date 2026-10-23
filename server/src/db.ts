@@ -222,6 +222,12 @@ db.exec(`
     PRIMARY KEY (botLower, room)
   );
 
+  -- Members QBot has already welcomed (each is welcomed once, ever).
+  CREATE TABLE IF NOT EXISTS bot_greeted (
+    accountLower TEXT PRIMARY KEY,
+    ts           INTEGER NOT NULL
+  );
+
   -- Pictures members have uploaded.
   CREATE TABLE IF NOT EXISTS uploads (
     name       TEXT PRIMARY KEY,

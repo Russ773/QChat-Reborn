@@ -198,6 +198,7 @@ export function deleteAccount(account: string): void {
   const lower = account.toLowerCase();
   db.prepare('DELETE FROM sessions WHERE accountLower = ?').run(lower);
   db.prepare('DELETE FROM profiles WHERE accountLower = ?').run(lower);
+  db.prepare('DELETE FROM bot_greeted WHERE accountLower = ?').run(lower);
   db.prepare('DELETE FROM accounts WHERE accountLower = ?').run(lower);
 }
 

@@ -18,6 +18,12 @@ interface BotRow {
 
 /** Make sure QBot exists. Call once at startup. */
 export function ensureBuiltInBots(): void {
+  // The first time this runs on a site that already has members, they all count as welcomed,
+  // so only people who join after this are greeted.
+  if (!db.prepare("SELECT 1 FROM settings WHERE key = 'qbotGreetSeeded'").get()) {
+    db.prepare('INSERT OR IGNORE INTO bot_greeted (accountLower, ts) SELECT accountLower, ? FROM accounts').run(Date.now());
+    db.prepare("INSERT INTO settings (key, value) VALUES ('qbotGreetSeeded', 'true')").run();
+  }
   db.prepare(
     `INSERT OR IGNORE INTO bots (nameLower, name, description, emoji, builtin, enabled, allRooms, createdAt)
      VALUES (?, ?, ?, ?, 1, 1, 1, ?)`,
@@ -52,6 +58,12 @@ export function getBot(name: string): AdminBot | null {
 /** True when a bot has this name (used to keep account names and bot names apart). */
 export function botNameTaken(name: string): boolean {
   return !!db.prepare('SELECT 1 FROM bots WHERE nameLower = ?').get(name.trim().toLowerCase());
+}
+
+/** True the first time it is called for a member (and never again): they have not been welcomed yet. */
+export function claimGreeting(account: string): boolean {
+  const r = db.prepare('INSERT OR IGNORE INTO bot_greeted (accountLower, ts) VALUES (?, ?)').run(account.toLowerCase(), Date.now());
+  return Number(r.changes) > 0;
 }
 
 /** The bots that are in a room right now. */

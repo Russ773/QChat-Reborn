@@ -1,190 +1,139 @@
-# Deploying QChat against a hosted IRCd
+# Deploying QChat Reborn
 
-You're hosting the **site** and the **IRCd** on separate infrastructure. QChat
-runs in **gateway mode**: each browser's WebSocket is bridged to a real
-connection on your InspIRCd/UnrealIRCd, and the `MEDIA` watch-party overlay
-stays on the QChat server (your IRCd never sees it).
+QChat Reborn is one small Node.js program that serves the website and the live chat. You put it
+on your server, run it as a service, and let your web server (Apache, nginx or Caddy) handle
+HTTPS and pass visitors to it.
 
-```
-                    ┌─────────────────────────── site host ───────────────────────────┐
-browser ── wss ────▶│  nginx (TLS)  ──▶  QChat Node server (gateway + media overlay)    │── TCP/TLS ──▶  your IRCd
-  (https)           └──────────────────────────────────────────────────────────────────┘              (InspIRCd / UnrealIRCd)
-```
+Everything needed is in the `deploy/` folder. It has been tested end to end on a clean copy:
+packing, installing production dependencies, running in production mode, the origin and HTTPS
+behaviour behind a proxy, and the nightly backup.
 
-Chat + presence come from your real IRC network (so HexChat/IRCCloud users share
-the same channels). QChat adds the synchronized player on top.
+## What you need
 
----
+* A Linux server with `systemd` and root access (Debian, Ubuntu, Fedora, Rocky or Alma). Node.js 24
+  is installed for you if it is missing.
+* A web server on it that can do HTTPS. qchat.co.uk currently points at `85.190.112.89`, which runs
+  Apache, so the Apache steps are below. nginx and Caddy files are included too.
+* The domain's DNS pointing at the server (it already does for qchat.co.uk).
 
-## 1. Build
-
-On the **site host** (Node 20+):
+## 1. Build the release (on your own computer)
 
 ```bash
-git clone <your repo> && cd "QChat - Reborn"
-npm install
-npm run build          # builds shared, server, and client (client → client/dist)
+bash deploy/pack.sh
 ```
 
-## 2. Configure
+This builds everything from scratch and makes `qchat-release.tar.gz` (about 200 KB).
+
+## 2. Upload and install (on the server)
 
 ```bash
-cp server/.env.example server/.env
+scp qchat-release.tar.gz youruser@85.190.112.89:~
+ssh youruser@85.190.112.89
+mkdir qchat-release && tar xzf qchat-release.tar.gz -C qchat-release
+sudo bash qchat-release/deploy/install.sh
 ```
 
-Edit `server/.env`:
+The installer:
 
-```ini
-HTTP_PORT=8080
-IRC_UPSTREAM_HOST=irc.yourdomain.com   # your IRCd
-IRC_UPSTREAM_PORT=6697
-IRC_UPSTREAM_TLS=1                      # 6697 = TLS; use 0 + port 6667 for plaintext
-IRC_UPSTREAM_TLS_REJECT_UNAUTHORIZED=1 # keep 1 unless the cert is self-signed
-IRC_SERVER_NAME=qchat.yourdomain.com
-WEBIRC_PASSWORD=change-me-strong       # see step 4 (leave empty to skip WEBIRC)
-WEBIRC_NAME=qchat
-```
+* installs Node.js 24 if needed,
+* makes a `qchat` user that cannot log in,
+* puts the app in `/opt/qchat`, keeps your data in `/var/lib/qchat`, your settings in
+  `/etc/qchat/qchat.env`,
+* starts it as a locked-down service called `qchat` that restarts itself if it ever stops,
+* sets up a nightly backup at 03:30 (the newest 14 are kept in `/var/backups/qchat`),
+* checks the app answers.
 
-Setting `IRC_UPSTREAM_HOST` is what flips the server into gateway mode. Unset it
-and you're back to the self-contained bundled ircd (local dev).
+The app listens on `127.0.0.1:8080` only, so nobody can reach it except through your web server.
 
-## 3. Run
+## 3. Check your settings
+
+Open `/etc/qchat/qchat.env` (the defaults suit qchat.co.uk):
+
+| Setting | Meaning |
+| --- | --- |
+| `ADMIN_ACCOUNTS=Russ` | Always administrators. Register this name first. |
+| `ALLOWED_ORIGINS` | The website addresses allowed to open the chat connection. |
+| `TRUST_PROXY=1` | Use the visitor address your web server passes along. Keep it on while the app is only reachable through the proxy. |
+| `HTTP_PORT=8080` | The local port. |
+| `SESSION_IDLE_DAYS=30` | How long a login can sit unused. |
+
+After editing: `sudo systemctl restart qchat`.
+
+## 4. Connect your web server
+
+**Apache (what 85.190.112.89 runs).** Follow `deploy/apache-vhost.conf.example`. In short: enable
+`proxy proxy_http proxy_wstunnel rewrite headers`, add the proxy lines to the HTTPS virtual host
+for qchat.co.uk (in Virtualmin: Server Configuration, Edit Proxy Website or Apache Directives),
+redirect port 80 to HTTPS, then `apachectl configtest && systemctl reload apache2` (or `httpd`).
+
+**nginx:** use `deploy/nginx.conf.example`, then `sudo certbot --nginx -d qchat.co.uk -d www.qchat.co.uk`.
+
+**Caddy:** use `deploy/Caddyfile.example`. It gets the certificate by itself.
+
+Whichever you use, it must (a) use HTTPS, (b) keep the `Host` header, (c) pass the chat connection
+(WebSocket) through, and (d) set the visitor address header itself rather than passing along one
+the visitor sent. The example files do all four.
+
+## 5. First visit
+
+1. Open `https://qchat.co.uk`.
+2. Choose **Create account** and register the admin name (`Russ`) first, with a long password
+   nobody could guess.
+3. Open your account menu, then **Admin area**, and look around. Sign ups can be switched off there
+   while you test.
+
+The old "Relaunching soon" page is replaced by the app once the proxy is on. If you want to keep it
+visible until you are ready, point the proxy at the app on a test address first (for example a
+subdomain), or do step 4 last.
+
+## 6. Firewall
+
+Only ports 22 (SSH), 80 and 443 should be open to the internet. Port 8080 must not be. For example
+with `ufw`: `ufw allow 22 && ufw allow 80 && ufw allow 443 && ufw enable`.
+
+## Updating later
+
+On your computer: `bash deploy/pack.sh`, upload the new `qchat-release.tar.gz`, unpack it into a new
+folder on the server and run `sudo bash that-folder/deploy/install.sh` again. Your data and
+settings are never touched. The previous version is kept in `/opt/qchat.prev`.
+
+**Rolling back:**
 
 ```bash
-npm start            # node --env-file-if-exists=server/.env dist/index.js
+sudo systemctl stop qchat
+sudo rm -rf /opt/qchat && sudo mv /opt/qchat.prev /opt/qchat
+sudo systemctl start qchat
 ```
 
-The server serves the built client **and** the `/irc` WebSocket on `HTTP_PORT`.
-Use a process manager for production, e.g. pm2:
+## Backups and restoring
+
+* Backups: `/var/backups/qchat/qchat-DATE.tar.gz` (database, profile photos and pictures). Take one
+  now with `sudo -u qchat QCHAT_DATA_DIR=/var/lib/qchat BACKUP_DIR=/var/backups/qchat /opt/qchat/deploy/backup.sh`.
+* Copy them off the server now and then, so one dead disk cannot take everything.
+* To restore:
 
 ```bash
-npm i -g pm2
-pm2 start "npm start" --name qchat
-pm2 save
+sudo systemctl stop qchat
+sudo tar xzf /var/backups/qchat/qchat-DATE.tar.gz -C /var/lib/qchat
+sudo chown -R qchat:qchat /var/lib/qchat
+sudo systemctl start qchat
 ```
 
-or a systemd unit running `node --env-file=/opt/qchat/server/.env /opt/qchat/server/dist/index.js`.
+## Everyday commands
 
-## 4. WEBIRC — show each user's real IP (recommended)
-
-Without WEBIRC, **every** QChat user connects to your IRCd from the site host's
-single IP. Your IRCd will likely hit per-IP connection limits and all users
-share one hostmask. WEBIRC lets the gateway tell the IRCd each visitor's real IP.
-
-QChat already sends the WEBIRC line (using `X-Forwarded-For` from your reverse
-proxy) when `WEBIRC_PASSWORD` is set. You must add a matching block on the IRCd
-whose **mask is the site host's public IP**.
-
-**InspIRCd** (`inspircd.conf`):
-
-```xml
-<module name="cgiirc">
-<cgihost type="webirc" mask="203.0.113.10" password="change-me-strong">
+```bash
+systemctl status qchat          # is it running?
+journalctl -u qchat -f          # live log (failed logins and blocked attempts show here)
+sudo systemctl restart qchat    # after changing settings
 ```
 
-**UnrealIRCd** (`unrealircd.conf`):
+## If something is wrong
 
-```
-webirc {
-    mask 203.0.113.10;          // the site host's public IP
-    password "change-me-strong";
-}
-```
+| Problem | Likely cause |
+| --- | --- |
+| The page loads but chat says it cannot connect | The proxy is not passing the WebSocket (`/ws`), or the Host header is not kept. See step 4. |
+| Everyone shares one address in the logs, and people get "too many attempts" | `TRUST_PROXY=1` is on but the proxy does not set the visitor address. See step 4 (d). |
+| The page cannot be reached | The service is down (`systemctl status qchat`) or the proxy is not set up. |
+| "node:sqlite" errors in the log | Node.js is older than 24. Run the installer again. |
 
-Replace `203.0.113.10` with your site host's public IP and use the same secret
-as `WEBIRC_PASSWORD`. Security note: a WEBIRC peer can assert any client IP, so
-keep the mask tight (just the gateway IP) and the password secret.
-
-### 4a. Connection throttling — required for multi-user (verified against irc.qchat.co.uk)
-
-Because every QChat browser session opens its own TCP connection **from the site
-host's IP**, your IRCd sees many connections from one address and will throttle
-them. Live testing against the UnrealIRCd hit exactly this:
-
-```
-ERROR :Closing Link: (Throttled: Reconnecting too fast ...)
-```
-
-UnrealIRCd's connect-throttle is evaluated on the **real TCP source IP** (the
-gateway), *before* WEBIRC is processed — so WEBIRC alone does **not** avoid it.
-You must exempt the gateway/site host IP and raise its per-IP client limit
-(`unrealircd.conf`):
-
-```
-/* Allow the QChat gateway host to open many connections */
-except throttle {
-    mask { ip 203.0.113.10; }   /* the SITE HOST's public IP, not the IRCd's */
-}
-
-/* Place ABOVE the default `allow { mask *; maxperip 3; }` — first match wins. */
-allow {
-    match { ip 203.0.113.10; }   /* the SITE HOST's public IP (allow::match, not ip) */
-    class    clients;
-    maxperip 200;                /* headroom for concurrent web users */
-}
-```
-
-Then `./unrealircd rehash`. Keep WEBIRC (step 4) as well so per-user bans/whois
-still see real IPs. Verify your version's exact block syntax in the UnrealIRCd
-docs (this targets UnrealIRCd 6.x).
-
-## 5. TLS + reverse proxy (required for a public https site)
-
-Browsers refuse a `ws://` connection from an `https://` page, so terminate TLS
-at nginx and proxy both the app and the WebSocket. Crucially, forward
-`X-Forwarded-For` so WEBIRC gets the real client IP.
-
-```nginx
-server {
-    listen 443 ssl;
-    server_name qchat.yourdomain.com;
-
-    ssl_certificate     /etc/letsencrypt/live/qchat.yourdomain.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/qchat.yourdomain.com/privkey.pem;
-
-    # IRC-over-WebSocket
-    location /irc {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_read_timeout 3600s;   # keep long-lived IRC sessions open
-    }
-
-    # App + static client
-    location / {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $remote_addr;
-    }
-}
-```
-
-The client auto-selects `wss://` when the page is served over `https://`, so no
-client config is needed.
-
-## 6. Smoke test
-
-1. Open `https://qchat.yourdomain.com`, connect with a nick, join `#test`.
-2. From a native IRC client on your network, join `#test` — you should see the
-   web user, and messages should flow both ways.
-3. In QChat, paste a YouTube link and hit **＋ queue**. Web users get the synced
-   player; native IRC users see `* nick shared a video: <url>`.
-
----
-
-## Notes & limits (current state)
-
-- **Media is a QChat-side overlay.** Only browser users get synced playback;
-  native IRC clients just see the shared link as an ACTION. Late-joining browser
-  users are synced to the current position automatically.
-- **Clock sync** currently assumes the server/client clocks agree (fine on one
-  machine; good enough on the same continent). A client↔server time-offset
-  handshake is a planned refinement for tighter drift correction.
-- **One upstream connection per browser tab.** Consider your IRCd's
-  `maxconnections`/`connectfreq` for the WEBIRC mask, and QChat's own rate needs.
-- **DMs / private queries** currently surface in the server buffer rather than a
-  dedicated tab — a planned client improvement.
-```
+See `SECURITY.md` for what the app protects against, and what is still your job.

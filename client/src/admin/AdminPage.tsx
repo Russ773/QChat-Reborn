@@ -622,6 +622,18 @@ function Settings({ token, notify, ask }: TabProps) {
           danger
           onChange={(v) => setForm({ ...form, maintenance: v })}
         />
+        <Switch
+          label="QBot welcomes new members"
+          help="QBot says hello the first time someone joins a room, and points them to !help."
+          checked={form.qbotWelcome}
+          onChange={(v) => setForm({ ...form, qbotWelcome: v })}
+        />
+        <Switch
+          label="QBot answers commands"
+          help="Members can type !help, !time, !roll, !flip, !rooms, !about or !ping and QBot replies."
+          checked={form.qbotCommands}
+          onChange={(v) => setForm({ ...form, qbotCommands: v })}
+        />
         <label className="dialog-field">
           Welcome message
           <textarea

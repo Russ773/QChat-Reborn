@@ -26,3 +26,6 @@ web/avatars/
 
 # SQLite data
 server/data/
+
+# Release package built by deploy/pack.sh
+qchat-release.tar.gz

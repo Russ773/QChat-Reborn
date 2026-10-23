@@ -13,6 +13,9 @@ import { getSettings } from './settings.js';
 import { UPLOAD_MIME, UPLOAD_NAME_RE, uploadsDir } from './uploads.js';
 
 const HTTP_PORT = Number(process.env.HTTP_PORT ?? 8080);
+// In production the app sits behind a reverse proxy, so it listens on this machine only. Otherwise
+// visitors could reach it directly and skip the proxy (and forge the address the limits rely on).
+const HOST = process.env.HOST ?? (process.env.NODE_ENV === 'production' ? '127.0.0.1' : undefined);
 const log = (msg: string) => console.log(`[qchat] ${new Date().toISOString()} ${msg}`);
 
 for (const name of ensureAdmins()) log(`promoted ${name} to administrator (ADMIN_ACCOUNTS)`);
@@ -24,6 +27,7 @@ const chat = new ChatServer(log, {
   isAdmin: (account) => isAdmin(account),
   lookup: (name) => lookupAccount(name),
   allowsPm: (account) => getPrefs(account).allowPm,
+  qbot: () => ({ welcome: getSettings().qbotWelcome, commands: getSettings().qbotCommands }),
 });
 
 // --- Static client --------------------------------------------------------
@@ -165,7 +169,9 @@ const prune = () => {
 prune();
 setInterval(prune, 3600 * 1000).unref();
 
-http.listen(HTTP_PORT, () => log(`listening on :${HTTP_PORT} (ws path /ws)`));
+const onListening = () => log(`listening on ${HOST ?? 'all interfaces'}:${HTTP_PORT} (ws path /ws)`);
+if (HOST) http.listen(HTTP_PORT, HOST, onListening);
+else http.listen(HTTP_PORT, onListening);
 
 function shutdown(): void {
   log('shutting down');
