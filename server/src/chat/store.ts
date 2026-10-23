@@ -197,6 +197,7 @@ function toLines(rows: MsgRow[]): ChatLine[] {
       text: r.text,
       ts: r.ts,
       ...(r.kind === 'action' ? { kind: 'action' as const } : {}),
+      ...(r.kind === 'bot' ? { bot: true as const } : {}),
       ...(r.editedAt ? { edited: r.editedAt } : {}),
       ...(reply ? { replyTo: reply } : {}),
       ...(r.image ? { image: r.image } : {}),
@@ -210,7 +211,7 @@ export interface NewMessage {
   image?: string;
 }
 
-export function addMessage(room: string, from: string, kind: 'action' | undefined, text: string, extra: NewMessage = {}): ChatLine {
+export function addMessage(room: string, from: string, kind: 'action' | 'bot' | undefined, text: string, extra: NewMessage = {}): ChatLine {
   const id = randomUUID();
   const ts = now();
   const r = db

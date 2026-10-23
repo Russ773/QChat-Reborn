@@ -1,5 +1,6 @@
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { validAccount } from '@qchat/shared';
+import { botNameTaken } from './bots.js';
 import { db } from './db.js';
 import { getSettings } from './settings.js';
 
@@ -65,7 +66,7 @@ export function register(account: string, email: string, password: string): Regi
   if (!getSettings().registrationOpen && !listedAdmin) {
     return { ok: false, status: 403, error: 'Sign ups are closed right now.' };
   }
-  if (db.prepare('SELECT 1 FROM accounts WHERE accountLower = ?').get(lower)) {
+  if (botNameTaken(lower) || db.prepare('SELECT 1 FROM accounts WHERE accountLower = ?').get(lower)) {
     return { ok: false, status: 422, error: 'That username is already taken.' };
   }
 

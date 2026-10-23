@@ -74,6 +74,21 @@ export interface AdminRoom {
   topic?: string | null;
 }
 
+/** A bot as the admin area manages it. */
+export interface AdminBot {
+  name: string;
+  description: string;
+  emoji: string;
+  builtin: boolean;
+  enabled: boolean;
+  /** True when the bot is in every room. */
+  allRooms: boolean;
+  /** The rooms it is in when allRooms is false. */
+  rooms: string[];
+  createdBy: string | null;
+  createdAt: number;
+}
+
 export interface AuditEntry {
   id: number;
   ts: number;

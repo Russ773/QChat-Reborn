@@ -187,6 +187,24 @@ db.exec(`
     PRIMARY KEY (fromLower, toLower)
   );
 
+  -- Bots that live in rooms. QBot is built in and is in every room.
+  CREATE TABLE IF NOT EXISTS bots (
+    nameLower   TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    emoji       TEXT NOT NULL DEFAULT '🤖',
+    builtin     INTEGER NOT NULL DEFAULT 0,
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    allRooms    INTEGER NOT NULL DEFAULT 1,
+    createdBy   TEXT,
+    createdAt   INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS bot_rooms (
+    botLower TEXT NOT NULL,
+    room     TEXT NOT NULL,
+    PRIMARY KEY (botLower, room)
+  );
+
   -- Pictures members have uploaded.
   CREATE TABLE IF NOT EXISTS uploads (
     name       TEXT PRIMARY KEY,

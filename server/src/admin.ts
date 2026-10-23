@@ -12,6 +12,7 @@ import {
   setSuspended,
 } from './accounts.js';
 import { removeAvatars } from './avatars.js';
+import { createBot, deleteBot, listBots, updateBot, type BotInput } from './bots.js';
 import type { ChatServer } from './chat/server.js';
 import { getReport, listReports, openReportCount, purgeAccount, resolveReport } from './chat/store.js';
 import { db } from './db.js';
@@ -29,6 +30,18 @@ function audit(admin: string, action: string, target: string | null = null, deta
 function listAudit(limit: number): AuditEntry[] {
   return db.prepare('SELECT id, ts, admin, action, target, detail FROM audit ORDER BY id DESC LIMIT ?')
     .all(limit) as unknown as AuditEntry[];
+}
+
+/** Pick the bot fields out of a request body, ignoring anything of the wrong type. */
+function botInput(b: Record<string, unknown>): BotInput {
+  return {
+    ...(typeof b.name === 'string' ? { name: b.name } : {}),
+    ...(typeof b.description === 'string' ? { description: b.description } : {}),
+    ...(typeof b.emoji === 'string' ? { emoji: b.emoji } : {}),
+    ...(typeof b.enabled === 'boolean' ? { enabled: b.enabled } : {}),
+    ...(typeof b.allRooms === 'boolean' ? { allRooms: b.allRooms } : {}),
+    ...(Array.isArray(b.rooms) ? { rooms: b.rooms.map(String) } : {}),
+  };
 }
 
 // --- Queries -----------------------------------------------------------------
@@ -163,6 +176,49 @@ export async function handleAdmin(
         if (r.id === id || r.messageId === report.messageId) resolveReport(r.id, me, resolution);
       }
       audit(me, 'resolve-report', report.author, `${resolution} (report #${id})`);
+      send(res, 200, { ok: true });
+      return true;
+    }
+  }
+
+  // --- Bots ---
+  if (seg[0] === 'bots') {
+    if (seg.length === 1 && method === 'GET') {
+      send(res, 200, { bots: listBots() });
+      return true;
+    }
+    if (seg.length === 1 && method === 'POST') {
+      const r = createBot(botInput(await readBody(req)), me);
+      if (!r.ok) return deny(res, r.error, r.status);
+      audit(me, 'create-bot', r.bot.name);
+      chat.refreshAllPresence();
+      send(res, 200, { bot: r.bot });
+      return true;
+    }
+    const name = decodeURIComponent(seg[1] ?? '');
+    if (seg.length === 2 && method === 'PUT') {
+      const r = updateBot(name, botInput(await readBody(req)));
+      if (!r.ok) return deny(res, r.error, r.status);
+      audit(me, 'edit-bot', r.bot.name);
+      chat.refreshAllPresence();
+      send(res, 200, { bot: r.bot });
+      return true;
+    }
+    if (seg.length === 2 && method === 'DELETE') {
+      const r = deleteBot(name);
+      if (!r.ok) return deny(res, r.error, r.status);
+      audit(me, 'delete-bot', r.bot.name);
+      chat.refreshAllPresence();
+      send(res, 200, { ok: true });
+      return true;
+    }
+    if (seg.length === 3 && seg[2] === 'say' && method === 'POST') {
+      const b = await readBody(req);
+      const room = String(b.room ?? '');
+      const text = String(b.text ?? '');
+      const err = chat.botSay(name, room, text);
+      if (err) return deny(res, err, 422);
+      audit(me, 'bot-say', name, `${room}: ${text.slice(0, 80)}`);
       send(res, 200, { ok: true });
       return true;
     }

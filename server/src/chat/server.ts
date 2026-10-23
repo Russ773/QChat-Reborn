@@ -20,6 +20,7 @@ import {
   type RoomRole,
   type ServerMsg,
 } from '@qchat/shared';
+import { botInRoom, botsInRoom, ensureBuiltInBots, getBot } from '../bots.js';
 import { UPLOAD_NAME_RE } from '../uploads.js';
 import * as store from './store.js';
 
@@ -90,6 +91,7 @@ export class ChatServer {
     private policy: ChatPolicy,
   ) {
     store.ensureBuiltInRooms(DEFAULT_ROOMS);
+    ensureBuiltInBots();
 
     // Drop dead connections.
     setInterval(() => {
@@ -271,6 +273,7 @@ export class ChatServer {
       topic: store.topicOf(store.getRoom(room)),
       roles: this.roleMap(room),
       away: this.awayNicks(room),
+      bots: botsInRoom(room),
     });
     this.broadcastPresence(room);
     const media = this.media.get(room);
@@ -502,6 +505,8 @@ export class ChatServer {
 
   private onFriendRequest(conn: Conn, toRaw: string): void {
     const me = conn.account!;
+    const bot = getBot(toRaw);
+    if (bot) return this.send(conn, { t: 'error', text: `${bot.name} is a bot, so it cannot be a friend.` });
     const target = this.policy.lookup(toRaw.trim());
     if (!target) return this.send(conn, { t: 'error', text: `There is no member called "${toRaw.trim()}".` });
     const ml = me.toLowerCase();
@@ -559,6 +564,8 @@ export class ChatServer {
 
   private onDm(conn: Conn, toRaw: string, text: string, kind?: 'action'): void {
     const me = conn.account!;
+    const bot = getBot(toRaw);
+    if (bot) return this.send(conn, { t: 'error', text: `${bot.name} is a bot and cannot chat privately yet.` });
     const target = this.policy.lookup(toRaw.trim());
     if (!target) return this.send(conn, { t: 'error', text: `There is no member called "${toRaw.trim()}".` });
     if (target.account.toLowerCase() === me.toLowerCase()) {
@@ -1018,6 +1025,7 @@ export class ChatServer {
       members: this.memberNicks(room),
       roles: this.roleMap(room),
       away: this.awayNicks(room),
+      bots: botsInRoom(room),
     });
   }
 
@@ -1202,6 +1210,28 @@ export class ChatServer {
     if (!out) return false;
     this.broadcast(room, { t: 'leaveNotice', room, nick: out, reason: 'removed by an admin' });
     return true;
+  }
+
+  /** Tell every room that has people in it that its bots may have changed. */
+  refreshAllPresence(): void {
+    for (const [room, members] of this.live) if (members.size > 0) this.broadcastPresence(room);
+  }
+
+  /**
+   * Make a bot say something in a room it is in. Returns an error message, or null when sent.
+   * This is also how bots will act later: everything a bot does goes through here.
+   */
+  botSay(botName: string, roomName: string, text: string): string | null {
+    const room = normalizeRoom(roomName);
+    const bot = botInRoom(botName, room);
+    if (!bot) return `${botName} is not in ${label(room)}.`;
+    if (!store.getRoom(room)) return 'There is no such room.';
+    const clean = sanitize(text);
+    if (!clean) return 'Write something for the bot to say.';
+    const line = store.addMessage(room, bot.name, 'bot', clean);
+    store.touchRoom(room);
+    this.broadcast(room, { t: 'message', room, line });
+    return null;
   }
 
   /** Send an announcement to one room, or to everyone connected. */

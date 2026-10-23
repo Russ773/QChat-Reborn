@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { COMMANDS } from '@qchat/shared';
+import { COMMANDS, type BotInfo } from '@qchat/shared';
 import type { ChatEvent } from '../types.js';
 import { EmojiPicker } from './EmojiPicker.js';
 import { Message } from './Message.js';
@@ -31,6 +31,8 @@ interface Props {
   onEdit: (id: string, text: string) => void;
   onDelete: (id: string) => void;
   onProfile: (name: string) => void;
+  /** The bots in this room, to show their pictures on what they said. */
+  bots?: BotInfo[];
   onClear?: () => void;
   /** Room-only extras: replies, reactions, reports and pictures. */
   rich?: {
@@ -197,6 +199,7 @@ export function Conversation(p: Props) {
               me={p.me}
               grouped={grouped}
               avatar={ev.from ? p.avatarFor(ev.from) : undefined}
+              botEmoji={ev.bot ? p.bots?.find((b) => b.name === ev.from)?.emoji : undefined}
               onProfile={p.onProfile}
               onEdit={editable ? (text) => p.onEdit(ev.id, text) : undefined}
               onDelete={deletable ? () => p.onDelete(ev.id) : undefined}

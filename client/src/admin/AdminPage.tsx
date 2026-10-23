@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { AdminReport, AdminRoom, AdminStats, AdminUser, AuditEntry, SiteSettings } from '@qchat/shared';
+import type { AdminBot, AdminReport, AdminRoom, AdminStats, AdminUser, AuditEntry, SiteSettings } from '@qchat/shared';
 import { Avatar } from '../components/Avatar.js';
 import { LogoMark, Wordmark } from '../components/Logo.js';
 import { adminApi } from './adminApi.js';
 
-type Tab = 'dashboard' | 'members' | 'rooms' | 'reports' | 'announce' | 'settings' | 'audit';
+type Tab = 'dashboard' | 'members' | 'rooms' | 'bots' | 'reports' | 'announce' | 'settings' | 'audit';
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: '📊' },
   { id: 'members', label: 'Members', icon: '👥' },
   { id: 'rooms', label: 'Rooms', icon: '💬' },
+  { id: 'bots', label: 'Bots', icon: '🤖' },
   { id: 'reports', label: 'Reports', icon: '🚩' },
   { id: 'announce', label: 'Announcements', icon: '📢' },
   { id: 'settings', label: 'Site settings', icon: '⚙️' },
@@ -45,6 +46,10 @@ const ACTION_LABEL: Record<string, string> = {
   'stop-video': 'Stopped a video',
   'kick-from-room': 'Removed someone from a room',
   'resolve-report': 'Dealt with a report',
+  'create-bot': 'Created a bot',
+  'edit-bot': 'Edited a bot',
+  'delete-bot': 'Deleted a bot',
+  'bot-say': 'Made a bot speak',
 };
 
 /** Load data once, and again whenever reload() is called. */
@@ -666,6 +671,228 @@ function Switch({
   );
 }
 
+// --- Bots -------------------------------------------------------------------------------------
+
+const EMOJI_CHOICES = ['🤖', '🛰️', '🎲', '🎵', '📣', '🧠', '🦊', '🐙', '⭐', '🔔'];
+
+function BotEditor({
+  token,
+  bot,
+  onClose,
+  onSaved,
+}: {
+  token: string;
+  bot: AdminBot | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const rooms = useLoad<AdminRoom[]>(() => adminApi.rooms(token), [token]);
+  const [name, setName] = useState(bot?.name ?? '');
+  const [description, setDescription] = useState(bot?.description ?? '');
+  const [emoji, setEmoji] = useState(bot?.emoji ?? '🤖');
+  const [enabled, setEnabled] = useState(bot?.enabled ?? true);
+  const [allRooms, setAllRooms] = useState(bot?.allRooms ?? true);
+  const [picked, setPicked] = useState<string[]>(bot?.rooms ?? []);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const builtin = bot?.builtin ?? false;
+
+  const toggle = (r: string) => setPicked((p) => (p.includes(r) ? p.filter((x) => x !== r) : [...p, r]));
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const form = { description, emoji, enabled, allRooms, rooms: picked };
+      if (bot) await adminApi.updateBot(token, bot.name, form);
+      else await adminApi.createBot(token, { ...form, name });
+      onSaved();
+      onClose();
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <form className="modal dialog bot-editor" onClick={(e) => e.stopPropagation()} onSubmit={save} role="dialog" aria-label="Bot">
+        <h2 className="modal-title">{bot ? `Edit ${bot.name}` : 'New bot'}</h2>
+        {!bot && (
+          <label className="dialog-field">
+            Name
+            <input autoFocus value={name} maxLength={24} onChange={(e) => setName(e.target.value)} placeholder="e.g. QuizBot" />
+          </label>
+        )}
+        <label className="dialog-field">
+          Description <span className="optional">(what it is for)</span>
+          <input value={description} maxLength={200} onChange={(e) => setDescription(e.target.value)} />
+        </label>
+        <div className="dialog-field">
+          Picture
+          <div className="emoji-choices">
+            {EMOJI_CHOICES.map((em) => (
+              <button type="button" key={em} className={`emoji-choice ${emoji === em ? 'on' : ''}`} onClick={() => setEmoji(em)}>
+                {em}
+              </button>
+            ))}
+          </div>
+        </div>
+        {builtin ? (
+          <p className="muted small">QBot is built in. It is always on and always in every room.</p>
+        ) : (
+          <>
+            <label className="check-row">
+              <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Switched on
+            </label>
+            <label className="check-row">
+              <input type="checkbox" checked={allRooms} onChange={(e) => setAllRooms(e.target.checked)} /> In every room
+            </label>
+            {!allRooms && (
+              <div className="room-pick">
+                {!rooms.data && <p className="muted small">Loading rooms…</p>}
+                {rooms.data?.map((r) => (
+                  <label className="check-row" key={r.name}>
+                    <input type="checkbox" checked={picked.includes(r.name)} onChange={() => toggle(r.name)} /> {roomLabel(r.name)}
+                  </label>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+        {error && <p className="pm-error">{error}</p>}
+        <div className="pm-actions">
+          <button type="button" className="secondary" onClick={onClose}>Cancel</button>
+          <button type="submit" disabled={busy}>{busy ? 'Saving…' : bot ? 'Save' : 'Create bot'}</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function BotSpeak({ token, bot, notify, onClose }: { token: string; bot: AdminBot; notify: (m: string) => void; onClose: () => void }) {
+  const rooms = useLoad<AdminRoom[]>(() => adminApi.rooms(token), [token]);
+  const [room, setRoom] = useState('');
+  const [text, setText] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const choices = (rooms.data ?? []).filter((r) => bot.allRooms || bot.rooms.includes(r.name));
+  const current = room || choices[0]?.name || '';
+
+  const send = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    try {
+      await adminApi.botSay(token, bot.name, current, text);
+      notify(`${bot.name} spoke in ${roomLabel(current)}.`);
+      onClose();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <form className="modal dialog" onClick={(e) => e.stopPropagation()} onSubmit={send} role="dialog" aria-label="Speak as a bot">
+        <h2 className="modal-title">Speak as {bot.name}</h2>
+        <label className="dialog-field">
+          Room
+          <select value={current} onChange={(e) => setRoom(e.target.value)}>
+            {choices.map((r) => (
+              <option key={r.name} value={r.name}>{roomLabel(r.name)}</option>
+            ))}
+          </select>
+        </label>
+        <label className="dialog-field">
+          Message
+          <input autoFocus value={text} maxLength={500} onChange={(e) => setText(e.target.value)} />
+        </label>
+        {error && <p className="pm-error">{error}</p>}
+        <div className="pm-actions">
+          <button type="button" className="secondary" onClick={onClose}>Cancel</button>
+          <button type="submit" disabled={!text.trim() || !current}>Send</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function Bots({ token, notify, ask }: TabProps) {
+  const bots = useLoad<AdminBot[]>(() => adminApi.bots(token), [token]);
+  const [editing, setEditing] = useState<AdminBot | 'new' | null>(null);
+  const [speaking, setSpeaking] = useState<AdminBot | null>(null);
+
+  const toggle = (b: AdminBot) =>
+    adminApi
+      .updateBot(token, b.name, { enabled: !b.enabled })
+      .then(() => {
+        notify(`${b.name} switched ${b.enabled ? 'off' : 'on'}.`);
+        bots.reload();
+      })
+      .catch((e: Error) => notify(e.message));
+
+  const remove = (b: AdminBot) =>
+    ask({
+      title: `Delete ${b.name}?`,
+      message: 'It leaves every room. What it said earlier stays in the chat history.',
+      confirmLabel: 'Delete bot',
+      danger: true,
+      run: async () => {
+        await adminApi.deleteBot(token, b.name);
+        notify(`${b.name} was deleted.`);
+        bots.reload();
+      },
+    });
+
+  const where = (b: AdminBot) =>
+    b.allRooms ? 'Every room' : b.rooms.length ? b.rooms.map(roomLabel).join(', ') : 'No rooms yet';
+
+  return (
+    <>
+      <PageHead title="Bots" sub="Bots live in rooms and are not counted as members. QBot is in every room." />
+      <div className="seg-actions">
+        <button onClick={() => setEditing('new')}>+ New bot</button>
+      </div>
+      {bots.error && <p className="pm-error">{bots.error}</p>}
+      {!bots.data && <p className="muted">Loading…</p>}
+      {bots.data?.map((b) => (
+        <div className={`panel bot-card ${b.enabled ? '' : 'off'}`} key={b.name}>
+          <div className="bot-card-main">
+            <span className="avatar bot" style={{ width: 44, height: 44, fontSize: 24 }}>{b.emoji}</span>
+            <div className="bot-card-text">
+              <div className="bot-card-name">
+                <b>{b.name}</b> <span className="bot-tag">BOT</span>
+                {b.builtin && <span className="pill">Built in</span>}
+                {!b.enabled && <span className="pill off">Off</span>}
+              </div>
+              <div className="muted small">{b.description || 'No description.'}</div>
+              <div className="muted small">In: {where(b)}</div>
+            </div>
+          </div>
+          <div className="report-actions">
+            <button className="mini" onClick={() => setSpeaking(b)} disabled={!b.enabled}>Speak</button>
+            <button className="mini" onClick={() => setEditing(b)}>Edit</button>
+            {!b.builtin && <button className="mini" onClick={() => toggle(b)}>{b.enabled ? 'Switch off' : 'Switch on'}</button>}
+            {!b.builtin && <button className="mini danger" onClick={() => remove(b)}>Delete</button>}
+          </div>
+        </div>
+      ))}
+      {editing && (
+        <BotEditor
+          token={token}
+          bot={editing === 'new' ? null : editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            notify('Bot saved.');
+            bots.reload();
+          }}
+        />
+      )}
+      {speaking && <BotSpeak token={token} bot={speaking} notify={notify} onClose={() => setSpeaking(null)} />}
+    </>
+  );
+}
+
 // --- Reports -----------------------------------------------------------------------------------
 
 function Reports({ token, notify, ask }: TabProps) {
@@ -818,6 +1045,7 @@ export function AdminPage({ token, me, onBack }: { token: string; me: string; on
         {tab === 'dashboard' && <Dashboard {...props} />}
         {tab === 'members' && <Members {...props} />}
         {tab === 'rooms' && <Rooms {...props} />}
+        {tab === 'bots' && <Bots {...props} />}
         {tab === 'reports' && <Reports {...props} />}
         {tab === 'announce' && <Announce {...props} />}
         {tab === 'settings' && <Settings {...props} />}

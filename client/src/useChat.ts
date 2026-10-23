@@ -52,6 +52,7 @@ const lineToEvent = (l: ChatLine | Dm, me: string, inRoom = true): ChatEvent => 
   text: l.text,
   ts: l.ts,
   self: l.from === me,
+  bot: 'bot' in l && l.bot ? true : undefined,
   edited: 'edited' in l ? l.edited : undefined,
   mention: inRoom && l.from !== me && mentions(l.text, me),
   replyTo: 'replyTo' in l ? l.replyTo : undefined,
@@ -187,6 +188,7 @@ function reducer(state: AppState, action: Action): AppState {
         topic: msg.topic,
         roles: msg.roles,
         away: msg.away,
+        bots: msg.bots,
         more: msg.more,
         loadingMore: false,
         typing: {},
@@ -258,7 +260,7 @@ function reducer(state: AppState, action: Action): AppState {
       }));
 
     case 'presence':
-      return patchRoom(state, msg.room, (r) => ({ ...r, members: msg.members, roles: msg.roles, away: msg.away }));
+      return patchRoom(state, msg.room, (r) => ({ ...r, members: msg.members, roles: msg.roles, away: msg.away, bots: msg.bots }));
 
     case 'topic':
       return patchRoom(state, msg.room, (r) => ({ ...r, topic: msg.topic }));

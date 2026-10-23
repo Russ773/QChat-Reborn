@@ -1,4 +1,4 @@
-import type { DmThread, FriendInfo, MediaState, ReplyRef, RoomInfo, RoomRole, RoomTopic } from '@qchat/shared';
+import type { BotInfo, DmThread, FriendInfo, MediaState, ReplyRef, RoomInfo, RoomRole, RoomTopic } from '@qchat/shared';
 import type { ChatStatus } from './chat/client.js';
 
 export type ChatEventKind =
@@ -24,6 +24,8 @@ export interface ChatEvent {
   seq?: number;
   /** When the message was last edited. */
   edited?: number;
+  /** True when a bot said it. */
+  bot?: boolean;
   /** True when the message mentions the local user. */
   mention?: boolean;
   /** The message this one answers. */
@@ -62,6 +64,8 @@ export interface RoomState {
   topic: RoomTopic | null;
   roles: Record<string, RoomRole>;
   away: string[];
+  /** The bots in this room (never counted as members). */
+  bots: BotInfo[];
   /** True when older saved messages can be loaded. */
   more: boolean;
   loadingMore: boolean;

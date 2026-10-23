@@ -23,6 +23,8 @@ export interface ChatLine {
   ts: number;
   /** 'action' for /me lines. */
   kind?: 'action';
+  /** True when a bot said it. */
+  bot?: true;
   /** When it was last edited, if ever. */
   edited?: number;
   /** The message this one answers. */
@@ -41,6 +43,19 @@ export interface ReplyRef {
   text: string;
   deleted?: boolean;
 }
+
+/** A bot that lives in rooms. Bots are not members: they are never counted as online. */
+export interface BotInfo {
+  name: string;
+  description: string;
+  /** Shown as its picture. */
+  emoji: string;
+  /** Built-in bots (QBot) cannot be removed from rooms or deleted. */
+  builtin: boolean;
+}
+
+export const MAX_BOT_DESCRIPTION = 200;
+export const BOT_NAME_RE = /^[A-Za-z][A-Za-z0-9_-]{1,23}$/;
 
 /** The reactions people can add to a message. */
 export const REACTION_EMOJI = ['👍', '❤️', '😂', '😮', '😢', '🎉', '🔥', '👀'] as const;
@@ -147,11 +162,12 @@ export type ServerMsg =
       topic: RoomTopic | null;
       roles: Record<string, RoomRole>;
       away: string[];
+      bots: BotInfo[];
     }
   | { t: 'left'; room: string }
   | { t: 'message'; room: string; line: ChatLine }
   | { t: 'history'; room: string; lines: ChatLine[]; more: boolean }
-  | { t: 'presence'; room: string; members: string[]; roles: Record<string, RoomRole>; away: string[] }
+  | { t: 'presence'; room: string; members: string[]; roles: Record<string, RoomRole>; away: string[]; bots: BotInfo[] }
   | { t: 'topic'; room: string; topic: RoomTopic | null }
   | { t: 'typing'; room: string; nick: string }
   | { t: 'edited'; room: string; id: string; text: string; edited: number }

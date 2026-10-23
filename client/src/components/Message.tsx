@@ -25,9 +25,11 @@ interface Props {
   onProfile?: (name: string) => void;
   /** The author's profile photo, if they have one. */
   avatar?: string;
+  /** The bot's picture, when a bot said it. */
+  botEmoji?: string;
 }
 
-export function Message({ event, me, grouped, onEnqueue, onEdit, onDelete, onReply, onReact, onReport, onProfile, avatar }: Props) {
+export function Message({ event, me, grouped, onEnqueue, onEdit, onDelete, onReply, onReact, onReport, onProfile, avatar, botEmoji }: Props) {
   const time = new Date(event.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(event.text);
@@ -92,7 +94,7 @@ export function Message({ event, me, grouped, onEnqueue, onEdit, onDelete, onRep
             aria-label={`Open ${event.from}'s profile`}
             onClick={() => event.from && onProfile?.(event.from)}
           >
-            <Avatar name={event.from ?? '?'} src={avatar} size={22} />
+            <Avatar name={event.from ?? '?'} src={avatar} size={22} emoji={event.bot ? botEmoji ?? '🤖' : undefined} />
           </button>
           <button
             type="button"
@@ -102,6 +104,7 @@ export function Message({ event, me, grouped, onEnqueue, onEdit, onDelete, onRep
           >
             {event.from}
           </button>
+          {event.bot && <span className="bot-tag">BOT</span>}
           <span className="ts">{time}</span>
         </div>
       )}

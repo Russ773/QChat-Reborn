@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { Profile, RoomRole } from '@qchat/shared';
+import type { BotInfo, Profile, RoomRole } from '@qchat/shared';
 import { dmKey, isDmKey, type ChatEvent } from './types.js';
 import {
   getProfile,
@@ -13,8 +13,12 @@ import {
   type AuthResult,
   type Role,
 } from './api.js';
+import { adminApi } from './admin/adminApi.js';
 import { AdminPage } from './admin/AdminPage.js';
 import { Avatar } from './components/Avatar.js';
+import { BotModal } from './components/BotModal.js';
+import { ConfirmModal } from './components/ConfirmModal.js';
+import { ContextMenu, type MenuItem } from './components/ContextMenu.js';
 import { Conversation } from './components/Conversation.js';
 import { Gate } from './components/Gate.js';
 import { LogoMark, Wordmark } from './components/Logo.js';
@@ -25,6 +29,7 @@ import { ProfileModal } from './components/ProfileModal.js';
 import { ReportModal } from './components/ReportModal.js';
 import { RoomSettingsModal } from './components/RoomSettingsModal.js';
 import { RoomsModal } from './components/RoomsModal.js';
+import { RoomTabs } from './components/RoomTabs.js';
 import { SearchPanel } from './components/SearchPanel.js';
 import { SoundPicker } from './components/SoundPicker.js';
 import { playSound as playSoundFx } from './media/sounds.js';
@@ -64,6 +69,9 @@ export default function App() {
   const [searching, setSearching] = useState(false);
   const [reporting, setReporting] = useState<{ room: string; msg: ChatEvent } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
+  const [confirm, setConfirm] = useState<React.ComponentProps<typeof ConfirmModal> | null>(null);
+  const [botCard, setBotCard] = useState<BotInfo | null>(null);
   const [autoplay, setAutoplay] = useState(true);
 
   // Keep the page address and the view in step (so /admin works and Back works).
@@ -236,7 +244,24 @@ export default function App() {
     const tools = [
       { label: 'Kick', run: run(`/kick ${target}`), danger: true },
       { label: 'Mute 10 min', run: run(`/mute ${target} 10`), danger: true },
-      { label: 'Ban', run: run(`/ban ${target}`), danger: true },
+      { label: 'Mute 1 hour', run: run(`/mute ${target} 60`), danger: true },
+      { label: 'Unmute', run: run(`/unmute ${target}`), danger: false },
+      {
+        label: 'Ban',
+        danger: true,
+        run: () =>
+          setConfirm({
+            title: `Ban ${target}?`,
+            message: `${target} will be removed from ${roomLabel(room.name)} and cannot come back until you unban them.`,
+            confirmLabel: 'Ban',
+            danger: true,
+            onConfirm: () => {
+              chat.say(room.name, `/ban ${target}`);
+              setModal(null);
+            },
+            onClose: () => setConfirm(null),
+          }),
+      },
     ];
     if (myRank >= 3) {
       tools.push(
@@ -246,6 +271,72 @@ export default function App() {
       );
     }
     return tools;
+  };
+
+  /** Site-wide actions, for administrators only. */
+  const siteAdminTools = (target: string) => {
+    if (role !== 'admin' || !token || target.toLowerCase() === state.nick.toLowerCase()) return [];
+    if (room?.roles[target] === 'admin') return []; // demote an admin before acting on them
+    const done = (msg: string) => setToast(msg);
+    const fail = (e: Error) => setToast(e.message);
+    return [
+      {
+        label: 'Suspend account…',
+        danger: true,
+        run: () =>
+          setConfirm({
+            title: `Suspend ${target}?`,
+            message: `${target} will be logged out and cannot log in until you unsuspend them in the admin area.`,
+            confirmLabel: 'Suspend',
+            danger: true,
+            askReason: true,
+            onConfirm: (reason) =>
+              adminApi.suspend(token, target, true, reason || undefined).then(() => done(`${target} was suspended.`)).catch(fail),
+            onClose: () => setConfirm(null),
+          }),
+      },
+      {
+        label: 'Log out everywhere',
+        danger: false,
+        run: () => adminApi.forceLogout(token, target).then(() => done(`${target} was logged out.`)).catch(fail),
+      },
+    ];
+  };
+
+  /** The right-click menu for someone in the Members list. */
+  const openMemberMenu = (target: string, x: number, y: number) => {
+    const self = target.toLowerCase() === state.nick.toLowerCase();
+    const items: MenuItem[] = [{ label: 'View profile', icon: '👤', onClick: () => openMember(target) }];
+    if (!self) {
+      items.push({ label: 'Send message', icon: '✉️', onClick: () => chat.openDm(target) });
+      const fs = friendStatus(target);
+      if (fs === 'none') items.push({ label: 'Add friend', icon: '➕', onClick: () => chat.friendRequest(target) });
+      if (fs === 'incoming') items.push({ label: 'Accept friend request', icon: '✅', onClick: () => chat.friendRespond(target, true) });
+      if (fs === 'friends') items.push({ label: 'Remove friend', icon: '➖', onClick: () => chat.friendRemove(target) });
+    }
+    const mod = modToolsFor(target) ?? [];
+    if (mod.length > 0) {
+      items.push({ kind: 'divider' }, { kind: 'heading', label: 'Room moderation' });
+      for (const t of mod) items.push({ label: t.label, danger: t.danger, onClick: t.run });
+    }
+    const site = siteAdminTools(target);
+    if (site.length > 0) {
+      items.push({ kind: 'divider' }, { kind: 'heading', label: 'Site admin' });
+      for (const t of site) items.push({ label: t.label, danger: t.danger, onClick: t.run });
+    }
+    setMenu({ x, y, items });
+  };
+
+  /** The menu behind your own name: profile, preferences, admin area, log out. */
+  const openAccountMenu = (el: HTMLElement) => {
+    const r = el.getBoundingClientRect();
+    const items: MenuItem[] = [
+      { label: 'My profile', icon: '👤', onClick: openOwnProfile },
+      { label: 'Preferences', icon: '⚙️', onClick: () => setShowPrefs(true) },
+    ];
+    if (role === 'admin') items.push({ label: 'Admin area', icon: '🛠️', onClick: () => go('admin') });
+    items.push({ kind: 'divider' }, { label: 'Log out', icon: '⏻', danger: true, onClick: doLogout });
+    setMenu({ x: r.left, y: r.bottom + 6, items });
   };
 
   return (
@@ -271,7 +362,13 @@ export default function App() {
           <Wordmark />
         </div>
 
-        <div className="profile-chip editable" onClick={openOwnProfile} title="View and edit your profile">
+        <button
+          type="button"
+          className="profile-chip editable"
+          onClick={(e) => openAccountMenu(e.currentTarget)}
+          aria-haspopup="menu"
+          title="Your account"
+        >
           <Avatar name={state.nick} src={myProfile?.avatar} size={34} />
           <div className="profile-meta">
             <span className="profile-nick">{myProfile?.displayName || state.nick}</span>
@@ -280,15 +377,8 @@ export default function App() {
               {role === 'admin' ? 'Admin' : 'Member'}
             </span>
           </div>
-          <span className="chip-edit">✎</span>
-        </div>
-        <div className="chip-links">
-          <button className="auth-link" onClick={() => setShowPrefs(true)}>Preferences</button>
-          {role === 'admin' && (
-            <button className="auth-link admin-link" onClick={() => go('admin')}>Admin</button>
-          )}
-          <button className="auth-link" onClick={doLogout}>Log out</button>
-        </div>
+          <span className="chip-edit">▾</span>
+        </button>
 
         <button className="rooms-btn" onClick={() => setShowRooms(true)}>
           <span>Browse rooms</span>
@@ -296,28 +386,6 @@ export default function App() {
         </button>
 
         <div className="side-scroll">
-          <div className="nav-label">My rooms</div>
-          <nav className="buffers">
-            {state.order.length === 0 && <p className="buffers-empty">You are not in any rooms yet.</p>}
-            {state.order.map((name) => {
-              const r = state.rooms[name];
-              return (
-                <button
-                  key={name}
-                  className={`buffer ${active === name ? 'active' : ''}`}
-                  onClick={() => chat.setActive(name)}
-                >
-                  <span className="buffer-name">{roomLabel(name)}</span>
-                  {r && r.mentions > 0 ? (
-                    <span className="badge mention" title="You were mentioned">@{r.mentions}</span>
-                  ) : (
-                    r && r.unread > 0 && <span className="badge">{r.unread}</span>
-                  )}
-                </button>
-              );
-            })}
-          </nav>
-
           <div className="nav-label-row">
             <span className="nav-label">Private messages</span>
             <button className="mini-plus" onClick={() => setShowNewDm(true)} title="New private message" aria-label="New private message">
@@ -459,6 +527,7 @@ export default function App() {
                 onEdit={(id, text) => chat.editMessage(room.name, id, text)}
                 onDelete={(id) => chat.deleteMessage(room.name, id)}
                 onProfile={openMember}
+                bots={room.bots}
                 onClear={() => chat.clearRoom(room.name)}
                 rich={{
                   onReact: (id, emoji) => chat.react(room.name, id, emoji),
@@ -479,6 +548,9 @@ export default function App() {
                   away={room.away}
                   avatarFor={avatarFor}
                   onPick={openMember}
+                  onMenu={openMemberMenu}
+                  bots={room.bots}
+                  onBot={setBotCard}
                 />
               </aside>
             </div>
@@ -528,6 +600,13 @@ export default function App() {
             </div>
           </>
         )}
+        <RoomTabs
+          order={state.order}
+          rooms={state.rooms}
+          active={active}
+          onPick={chat.setActive}
+          onBrowse={() => setShowRooms(true)}
+        />
       </main>
 
       {modal && (
@@ -604,6 +683,9 @@ export default function App() {
           onClose={() => setReporting(null)}
         />
       )}
+      {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
+      {confirm && <ConfirmModal {...confirm} />}
+      {botCard && <BotModal bot={botCard} onClose={() => setBotCard(null)} />}
       {toast && <div className="toast" role="status">{toast}</div>}
       {showPrefs && token && (
         <PreferencesModal
@@ -622,12 +704,19 @@ function MembersPanel({
   away,
   avatarFor,
   onPick,
+  onMenu,
+  bots,
+  onBot,
 }: {
   members: string[];
   roles: Record<string, RoomRole>;
   away: string[];
   avatarFor: (name: string) => string | undefined;
   onPick: (nick: string) => void;
+  /** Right-click (or the keyboard menu key) on a member. */
+  onMenu: (nick: string, x: number, y: number) => void;
+  bots: BotInfo[];
+  onBot: (bot: BotInfo) => void;
 }) {
   // Staff first, then everyone else, each group alphabetical.
   const sorted = useMemo(
@@ -647,6 +736,10 @@ function MembersPanel({
               className={`member-item ${awaySet.has(m) ? 'away' : ''}`}
               title={r ? `${ROLE_NAME[r]}${awaySet.has(m) ? ', away' : ''}` : awaySet.has(m) ? 'Away' : 'View profile'}
               onClick={() => onPick(m)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                onMenu(m, e.clientX, e.clientY);
+              }}
             >
               <Avatar name={m} src={avatarFor(m)} size={26} />
               <span className="member-name">{m}</span>
@@ -655,6 +748,29 @@ function MembersPanel({
           );
         })}
       </ul>
+      {bots.length > 0 && (
+        <>
+          <div className="rail-head bots-head">Bots · {bots.length}</div>
+          <ul className="member-list">
+            {bots.map((b) => (
+              <li
+                key={b.name}
+                className="member-item bot"
+                title={b.description || b.name}
+                onClick={() => onBot(b)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  onBot(b);
+                }}
+              >
+                <Avatar name={b.name} size={26} emoji={b.emoji} />
+                <span className="member-name">{b.name}</span>
+                <span className="bot-tag">BOT</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </div>
   );
 }
