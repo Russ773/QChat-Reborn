@@ -117,7 +117,7 @@ export const PRIVACY: Section[] = [
     title: 'Cookies and tracking',
     body: [
       'QChat does not set cookies of its own and does not use advertising or analytics. Your sign in is kept in your browser\'s session storage, which is cleared when you close the window, so you sign in again next time.',
-      'When you play a video, YouTube loads in the page and may set its own cookies or collect information, under Google\'s privacy policy. The page also loads its typeface from Google Fonts, which means Google sees your IP address when you open the site.',
+      'When you play a video, YouTube loads in the page and may set its own cookies or collect information, under Google\'s privacy policy. The typeface is served from this site, so opening QChat does not contact Google.',
     ],
   },
   {

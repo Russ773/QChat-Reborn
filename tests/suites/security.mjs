@@ -37,6 +37,7 @@ if (phase === 'a') {
   const csp = hd('content-security-policy');
   check('the page has a Content-Security-Policy', /default-src 'self'/.test(csp) && /frame-ancestors 'none'/.test(csp) && /object-src 'none'/.test(csp));
   check('scripts are limited to our own and YouTube (no inline)', /script-src 'self' https:\/\/www\.youtube\.com/.test(csp) && !/script-src[^;]*unsafe-inline/.test(csp));
+  check('the typeface is our own: no Google Fonts allowed or requested', !/google|gstatic/.test(csp) && !/fonts\.g/.test(await (await raw('GET', '/')).text()));
   check('nosniff, no framing, referrer and permissions policies', hd('x-content-type-options') === 'nosniff' && hd('x-frame-options') === 'DENY' && /strict-origin/.test(hd('referrer-policy')) && /camera=\(\)/.test(hd('permissions-policy')));
   check('no HSTS over plain http', hd('strict-transport-security') === '');
   r = await raw('GET', '/', { headers: { 'x-forwarded-proto': 'https' } });

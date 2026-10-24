@@ -130,14 +130,14 @@ export const SESSION_MAX_MS = Math.max(SESSION_IDLE_MS, 90 * 24 * HOUR);
 // --- Browser security headers -----------------------------------------------------
 
 /**
- * What the page may load. Everything is our own, except Google Fonts (the typeface) and
- * the YouTube player. No inline scripts are allowed, so an injected <script> would not run.
+ * What the page may load. Everything is our own (the typeface is served from this site too),
+ * except the YouTube player. No inline scripts are allowed, so an injected <script> would not run.
  */
 const CSP = [
   "default-src 'self'",
   "script-src 'self' https://www.youtube.com",
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-  "font-src 'self' https://fonts.gstatic.com",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self'",
   "img-src 'self' data: blob: https://i.ytimg.com",
   "media-src 'self' blob: data:",
   "connect-src 'self'",

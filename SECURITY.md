@@ -12,7 +12,7 @@ do when you put it on the internet.
 | Guessing passwords | 6 wrong tries per person per address, 30 per address, 40 per account, each per window (15 minutes, 15 minutes, 1 hour). Even the right password is refused while blocked. A success clears the personal count. |
 | Fake accounts | 5 new accounts per address per hour, 200 per hour for the whole site. |
 | Request floods | 600 API calls a minute per address. 40 new chat connections a minute and 60 open at once per address. A connection that does not log in within 15 seconds is dropped. |
-| Browser | Content-Security-Policy (our own scripts only, plus the YouTube player and Google Fonts), no framing, no content sniffing, strict referrer, camera and microphone off, HSTS on https. |
+| Browser | Content-Security-Policy (our own scripts only, plus the YouTube player), no framing, no content sniffing, strict referrer, camera and microphone off, HSTS on https. |
 | Other websites | A chat socket can only be opened from our own site (browsers always send the origin). |
 | Pictures | Real image bytes are checked, SVG and HTML are refused, random file names, served with a locked-down policy. |
 | Admin | The admin role is checked in the database on every request, every action is in the audit log. |
