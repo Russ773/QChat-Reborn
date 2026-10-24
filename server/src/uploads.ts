@@ -6,6 +6,8 @@ import { dataDir } from './db.js';
 export const uploadsDir = join(dataDir, 'uploads');
 mkdirSync(uploadsDir, { recursive: true });
 
+/** How much picture space one member may use in total. */
+export const MAX_UPLOAD_TOTAL = 100 * 1024 * 1024;
 export const MAX_UPLOAD_BYTES = 3 * 1024 * 1024; // 3 MiB
 /** At most this many uploads per account in this many milliseconds. */
 export const UPLOAD_LIMIT = 20;

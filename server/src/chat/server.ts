@@ -52,7 +52,7 @@ import {
   topScores,
 } from '../trivia.js';
 import { WS_LOGIN_TIMEOUT_MS } from '../security.js';
-import { UPLOAD_NAME_RE } from '../uploads.js';
+import { UPLOAD_NAME_RE, removeUploadFiles } from '../uploads.js';
 import * as store from './store.js';
 
 interface Conn {
@@ -109,6 +109,10 @@ const DAY = 24 * 3600 * 1000;
 /** User rooms nobody has touched for this long are deleted. */
 const ROOM_EXPIRY = 30 * DAY;
 const KEEP_MESSAGES = 5000;
+/** Private messages kept per conversation. */
+const KEEP_DMS = 2000;
+/** A picture nobody uses is removed after this long (so a picture you are about to send is safe). */
+const UNUSED_PICTURE_GRACE = DAY;
 
 /** Newlines and tabs become a space; other control characters are dropped. */
 const sanitize = (text: string) =>
@@ -163,6 +167,12 @@ export class ChatServer {
       const gone = store.expireRooms(Date.now() - ROOM_EXPIRY, (n) => (this.live.get(n)?.size ?? 0) > 0);
       for (const n of gone) this.log(`room expired (unused for 30 days): ${n}`);
       store.trimMessages(KEEP_MESSAGES);
+      store.trimDms(KEEP_DMS);
+      const unused = store.takeUnusedUploads(Date.now() - UNUSED_PICTURE_GRACE);
+      if (unused.length > 0) {
+        removeUploadFiles(unused);
+        this.log(`removed ${unused.length} unused picture(s)`);
+      }
     };
     tidy();
     setInterval(tidy, 3600 * 1000).unref();

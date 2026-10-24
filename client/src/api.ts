@@ -50,17 +50,19 @@ export interface AuthResult {
 export interface SiteStatus {
   registrationOpen: boolean;
   maintenance: boolean;
+  /** Where to reach the administrators ('' when not set). */
+  contactEmail?: string;
 }
 
 export function siteStatus(): Promise<SiteStatus> {
   return jreq('/api/site');
 }
 
-export function register(account: string, email: string, password: string): Promise<AuthResult> {
+export function register(account: string, email: string, password: string, agree: boolean): Promise<AuthResult> {
   return jreq('/api/register', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ account, email, password }),
+    body: JSON.stringify({ account, email, password, agree }),
   });
 }
 
@@ -106,6 +108,25 @@ export function uploadImage(token: string, file: Blob): Promise<{ name: string; 
 /** Change your own password. Resolves when it worked, rejects with a readable message when not. */
 export async function changePassword(token: string, current: string, next: string): Promise<void> {
   await jreq('/api/password', { method: 'POST', headers: jsonAuth(token), body: JSON.stringify({ current, next }) });
+}
+
+/** Download everything QChat holds about you, as a JSON file. */
+export async function fetchMyData(token: string): Promise<void> {
+  const r = await fetch('/api/account/export', { headers: authHeaders(token) });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Could not get your data.');
+  const url = URL.createObjectURL(await r.blob());
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'qchat-my-data.json';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+/** Delete your own account for good. */
+export async function deleteMyAccount(token: string, password: string): Promise<void> {
+  await jreq('/api/account', { method: 'DELETE', headers: jsonAuth(token), body: JSON.stringify({ password }) });
 }
 
 export function logout(token: string): void {

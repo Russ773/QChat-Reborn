@@ -1,12 +1,13 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { validAccount } from '@qchat/shared';
 import { handleAdmin } from './admin.js';
-import { accountForToken, changePassword, createSession, getRole, login, logout, register } from './accounts.js';
-import { AVATAR_TYPES, MAX_AVATAR_BYTES, saveAvatar } from './avatars.js';
+import { accountForToken, changePassword, createSession, deleteAccount, getRole, login, logout, register, verifyAccountPassword } from './accounts.js';
+import { eraseAccountData, exportAccount } from './account-data.js';
+import { AVATAR_TYPES, MAX_AVATAR_BYTES, removeAvatars, saveAvatar } from './avatars.js';
 import type { ChatServer } from './chat/server.js';
 import * as store from './chat/store.js';
 import { bearer, readBody, readRawBody, send } from './httpUtil.js';
-import { MAX_UPLOAD_BYTES, UPLOAD_LIMIT, UPLOAD_WINDOW, saveUploadFile, sniffImage } from './uploads.js';
+import { MAX_UPLOAD_BYTES, MAX_UPLOAD_TOTAL, UPLOAD_LIMIT, UPLOAD_WINDOW, removeUploadFiles, saveUploadFile, sniffImage } from './uploads.js';
 import { getPrefs, getProfile, publicProfile, saveProfile, savePrefs, setAvatar } from './profiles.js';
 import { getSettings } from './settings.js';
 import {
@@ -46,7 +47,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, chat:
   // What the login screen needs to know before anyone is logged in.
   if (path === '/api/site' && method === 'GET') {
     const s = getSettings();
-    send(res, 200, { registrationOpen: s.registrationOpen, maintenance: s.maintenance });
+    send(res, 200, { registrationOpen: s.registrationOpen, maintenance: s.maintenance, contactEmail: s.contactEmail });
     return true;
   }
 
@@ -54,7 +55,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, chat:
     const wait = Math.max(signupsByIp.wait(ip), signupsGlobal.wait('site'));
     if (wait > 0) return tooMany(res, wait);
     const b = await readBody(req);
-    const r = register(String(b.account ?? ''), String(b.email ?? ''), String(b.password ?? ''));
+    const r = register(String(b.account ?? ''), String(b.email ?? ''), String(b.password ?? ''), b.agree === true);
     if (!r.ok) {
       send(res, r.status ?? 422, { error: r.error });
     } else {
@@ -127,6 +128,51 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, chat:
     return true;
   }
 
+  // Everything QChat holds about you, as a file you can keep.
+  if (path === '/api/account/export' && method === 'GET') {
+    const acct = accountForToken(bearer(req));
+    if (!acct) {
+      send(res, 401, { error: 'Not logged in.' });
+      return true;
+    }
+    res.writeHead(200, {
+      'content-type': 'application/json; charset=utf-8',
+      'content-disposition': `attachment; filename="qchat-data-${acct}.json"`,
+    });
+    res.end(JSON.stringify(exportAccount(acct), null, 2));
+    return true;
+  }
+
+  // Delete your own account and everything tied to it. Needs your password.
+  if (path === '/api/account' && method === 'DELETE') {
+    const acct = accountForToken(bearer(req));
+    if (!acct) {
+      send(res, 401, { error: 'Not logged in.' });
+      return true;
+    }
+    if (getRole(acct) === 'admin') {
+      send(res, 409, { error: 'Administrators cannot delete their own account. Ask another administrator to remove your admin rights first.' });
+      return true;
+    }
+    const key = acct.toLowerCase();
+    const wait = passwordChangeFails.wait(key);
+    if (wait > 0) return tooMany(res, wait);
+    const b = await readBody(req);
+    if (!verifyAccountPassword(acct, String(b.password ?? ''))) {
+      passwordChangeFails.hit(key);
+      console.log(`[qchat] wrong password when "${forLog(acct)}" tried to delete their account, from ${forLog(ip)}`);
+      send(res, 403, { error: 'That password is not right.' });
+      return true;
+    }
+    chat.kickAccount(acct, 'Your account has been deleted.');
+    removeAvatars(acct);
+    removeUploadFiles(eraseAccountData(acct));
+    deleteAccount(acct);
+    console.log(`[qchat] ${forLog(acct)} deleted their account`);
+    send(res, 200, { ok: true });
+    return true;
+  }
+
   if (path === '/api/logout' && method === 'POST') {
     logout(bearer(req));
     send(res, 200, { ok: true });
@@ -195,6 +241,10 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, chat:
     }
     if (store.countUploadsSince(acct.toLowerCase(), Date.now() - UPLOAD_WINDOW) >= UPLOAD_LIMIT) {
       send(res, 429, { error: 'You are uploading too quickly. Wait a few minutes and try again.' });
+      return true;
+    }
+    if (store.uploadBytesOf(acct.toLowerCase()) >= MAX_UPLOAD_TOTAL) {
+      send(res, 413, { error: 'You have used all of your picture space. Delete some of your messages that have pictures, then try again.' });
       return true;
     }
     const buf = await readRawBody(req, MAX_UPLOAD_BYTES);

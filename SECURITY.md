@@ -52,7 +52,14 @@ do when you put it on the internet.
 * Private messages are not encrypted in the database. An administrator cannot read them in the
   app, but whoever runs the server can read the file.
 * There is no email check or CAPTCHA at sign up, and no password reset by email. Admins reset
-  passwords by hand. The sign up limits above are the only brake on bots.
+  passwords by hand, and a forgotten admin password is recovered with the command-line tool in
+  DEPLOYMENT.md. The sign up limits above are the only brake on bots.
+* Members can download their data and delete their own account (it needs their password, and wrong
+  guesses are throttled like the change-password screen). Deleted data stays in the nightly backups
+  until they are rotated out (14 days).
+* Housekeeping keeps the disk in check: private messages are trimmed to the newest 2,000 per
+  conversation, pictures no message uses are removed after a day, and each member has 100 MB of
+  picture space.
 * A determined attacker spread across thousands of addresses can still try 40 passwords an hour
   against one account. Strong passwords are the answer to that.
 * The limits are held in memory, so they reset when the server restarts.

@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { validAccount, type AdminStats, type AdminUser, type AuditEntry } from '@qchat/shared';
+import { validAccount, validContact, type AdminStats, type AdminUser, type AuditEntry } from '@qchat/shared';
 import {
   accountExists,
   accountForToken,
@@ -140,7 +140,11 @@ export async function handleAdmin(
       send(res, 200, { settings: getSettings() });
     } else if (method === 'PUT') {
       const before = getSettings();
-      const after = saveSettings(await readBody(req));
+      const body = await readBody(req);
+      if (typeof body.contactEmail === 'string' && !validContact(body.contactEmail.trim())) {
+        return deny(res, 'That does not look like an email address.', 422);
+      }
+      const after = saveSettings(body);
       const changed = (Object.keys(after) as (keyof typeof after)[]).filter((k) => after[k] !== before[k]);
       if (changed.length) audit(me, 'settings', null, changed.map((k) => `${k}=${String(after[k]).slice(0, 60)}`).join(', '));
       // Turning maintenance on also sends everyone who is not an admin home.

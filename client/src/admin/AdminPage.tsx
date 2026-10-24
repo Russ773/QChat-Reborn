@@ -766,6 +766,16 @@ function Settings({ token, notify, ask }: TabProps) {
             placeholder="Shown to everyone as they join a room. Leave empty for none."
           />
         </label>
+        <label className="dialog-field">
+          Contact email
+          <input
+            type="email"
+            maxLength={120}
+            value={form.contactEmail}
+            onChange={(e) => setForm({ ...form, contactEmail: e.target.value })}
+            placeholder="Shown on the Terms and Privacy pages. Leave empty for none."
+          />
+        </label>
         {error && <p className="pm-error">{error}</p>}
         <div className="pm-actions">
           <button className="secondary" disabled={!dirty} onClick={() => setForm(loaded.data)}>

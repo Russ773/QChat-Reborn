@@ -917,3 +917,29 @@ button.profile-chip:hover { filter: none; transform: none; }
 
 /* A little room between the time and the words in event lines ("16:42 Russ started a video") */
 .msg.meta .ts, .msg.event .ts, .msg.announcement .ts { margin-right: 8px; opacity: 0.75; font-variant-numeric: tabular-nums; }
+
+/* --- Sign up agreement, footer links, delete list ------------------------------ */
+.gate-card label.gate-agree { flex-direction: row; align-items: flex-start; gap: 10px; font-weight: 500; line-height: 1.4; }
+.gate-card label.gate-agree input { width: auto; margin-top: 3px; flex: none; }
+.gate-card label.gate-agree a { color: var(--accent, #7ee0ff); }
+.gate-foot { position: relative; z-index: 1; display: flex; justify-content: center; gap: 18px; padding: 10px 16px 22px; font-size: 0.85rem; }
+.gate-foot a { color: var(--dim); text-decoration: none; }
+.gate-foot a:hover { color: var(--paper); text-decoration: underline; }
+.delete-list { margin: 0 0 12px; padding-left: 22px; color: var(--dim); line-height: 1.6; }
+
+/* --- Terms of Use and Privacy Notice -------------------------------------------- */
+.legal { min-height: 100vh; background: var(--ink); color: var(--paper); }
+.legal-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 24px; border-bottom: 1px solid var(--line); }
+.legal-brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: inherit; font-size: 1.3rem; }
+.legal-nav { display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.legal-nav a { color: var(--dim); text-decoration: none; padding: 4px 0; }
+.legal-nav a:hover, .legal-nav a.on { color: var(--paper); }
+.legal-nav a.on { border-bottom: 2px solid currentColor; }
+.legal-body { max-width: 740px; margin: 0 auto; padding: 28px 20px 70px; line-height: 1.65; }
+.legal-body h1 { margin: 0 0 4px; font-size: 2rem; }
+.legal-body h2 { margin: 28px 0 6px; font-size: 1.15rem; }
+.legal-body p, .legal-body li { color: #d8d6ee; }
+.legal-body ul { padding-left: 22px; }
+.legal-body li { margin: 4px 0; }
+.legal-body a { color: var(--accent, #7ee0ff); }
+.legal-updated { color: var(--dim); margin: 0 0 8px; }

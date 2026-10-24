@@ -20,6 +20,7 @@ export function Gate({ onAuthed, notice }: Props) {
   const [account, setAccount] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [agree, setAgree] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [site, setSite] = useState<SiteStatus | null>(null);
@@ -42,10 +43,14 @@ export function Gate({ onAuthed, notice }: Props) {
       setError('Enter your username and password.');
       return;
     }
+    if (signupMode && !agree) {
+      setError('Please confirm you are 13 or over and agree to the Terms and Privacy Notice.');
+      return;
+    }
     setBusy(true);
     try {
       const res = signupMode
-        ? await register(account.trim(), email.trim(), password)
+        ? await register(account.trim(), email.trim(), password, agree)
         : await login(account.trim(), password);
       onAuthed(res);
     } catch (err) {
@@ -160,6 +165,16 @@ export function Gate({ onAuthed, notice }: Props) {
                   placeholder={signupMode ? 'At least 8 characters' : 'Your password'}
                 />
               </label>
+              {signupMode && (
+                <label className="gate-agree">
+                  <input type="checkbox" checked={agree} onChange={(e) => setAgree(e.target.checked)} />
+                  <span>
+                    I am 13 or over and I agree to the{' '}
+                    <a href="/terms" target="_blank" rel="noopener">Terms of Use</a> and{' '}
+                    <a href="/privacy" target="_blank" rel="noopener">Privacy Notice</a>.
+                  </span>
+                </label>
+              )}
 
               {message && <p className="pm-error">{message}</p>}
               <button type="submit" disabled={busy} className="gate-submit">
@@ -170,6 +185,11 @@ export function Gate({ onAuthed, notice }: Props) {
           {mode === 'signup' && signupClosed && message && <p className="pm-error">{message}</p>}
         </form>
       </div>
+      <footer className="gate-foot">
+        <a href="/terms" target="_blank" rel="noopener">Terms of Use</a>
+        <a href="/privacy" target="_blank" rel="noopener">Privacy Notice</a>
+        {site?.contactEmail && <a href={`mailto:${site.contactEmail}`}>Contact</a>}
+      </footer>
     </div>
   );
 }

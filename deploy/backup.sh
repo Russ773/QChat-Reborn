@@ -34,8 +34,12 @@ db.close();
 [ -f "$tmp/qchat.db" ] || { echo "The database copy failed" >&2; exit 1; }
 for d in avatars uploads; do [ -d "$DATA_DIR/$d" ] && cp -a "$DATA_DIR/$d" "$tmp/$d"; done
 
+# GNU tar reads "C:" as a machine name, so on Windows (Git Bash) tell it these are local files.
+TAR_OPTS=""
+tar --version 2>/dev/null | grep -qi gnu && TAR_OPTS="--force-local"
+
 out="$BACKUP_DIR/qchat-$stamp.tar.gz"
-tar czf "$out" -C "$tmp" .
+tar czf "$out" $TAR_OPTS -C "$tmp" .
 echo "$(date '+%F %T') wrote $out ($(du -h "$out" | cut -f1))"
 
 # Keep only the newest $KEEP

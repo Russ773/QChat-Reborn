@@ -119,6 +119,17 @@ sudo chown -R qchat:qchat /var/lib/qchat
 sudo systemctl start qchat
 ```
 
+## If you forget the admin password
+
+There is no email reset, so there is a tool on the server. It sets a new random password, prints it once, and
+logs that member out everywhere. Sign in with it, then change it from the account menu.
+
+```bash
+sudo -u qchat env QCHAT_DATA_DIR=/var/lib/qchat /opt/qchat-node/bin/node /opt/qchat/server/dist/tools/reset-password.js Russ
+```
+
+Add a second argument to choose the password yourself. The reset is written to the audit log in the admin area.
+
 ## Everyday commands
 
 ```bash

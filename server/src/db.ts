@@ -277,5 +277,6 @@ addColumn('accounts', 'role', "TEXT NOT NULL DEFAULT 'user'");
 addColumn('accounts', 'suspended', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('accounts', 'suspendedReason', 'TEXT');
 addColumn('accounts', 'lastLogin', 'INTEGER');
+addColumn('accounts', 'termsAcceptedAt', 'INTEGER');
 addColumn('messages', 'replyTo', 'TEXT');
 addColumn('messages', 'image', 'TEXT');

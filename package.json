@@ -16,7 +16,9 @@
     "dev:client": "npm run dev --workspace client",
     "build": "npm run build --workspace shared && npm run build --workspace server && npm run build --workspace client",
     "start": "npm run start --workspace server",
-    "typecheck": "npm run build --workspace shared && tsc -p server/tsconfig.json --noEmit && tsc -p client/tsconfig.json --noEmit"
+    "typecheck": "npm run build --workspace shared && tsc -p server/tsconfig.json --noEmit && tsc -p client/tsconfig.json --noEmit",
+    "test": "node tests/run.mjs",
+    "test:list": "node tests/run.mjs --list"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

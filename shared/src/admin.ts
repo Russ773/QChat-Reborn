@@ -12,6 +12,8 @@ export interface SiteSettings {
   qbotWelcome: boolean;
   /** QBot answers ! commands such as !help and !roll. */
   qbotCommands: boolean;
+  /** Where members can reach the administrators (shown on the terms and privacy pages). Empty for none. */
+  contactEmail: string;
 }
 
 export const DEFAULT_SETTINGS: SiteSettings = {
@@ -20,9 +22,15 @@ export const DEFAULT_SETTINGS: SiteSettings = {
   welcomeMessage: '',
   qbotWelcome: true,
   qbotCommands: true,
+  contactEmail: '',
 };
 
 export const MAX_WELCOME = 300;
+export const MAX_CONTACT = 120;
+
+/** An email address, or empty for none. */
+export const validContact = (s: string): boolean =>
+  s === '' || (s.length <= MAX_CONTACT && /^[^@\s]{1,64}@[^@\s]+\.[^@\s]{2,}$/.test(s));
 
 export interface AdminStats {
   members: number;

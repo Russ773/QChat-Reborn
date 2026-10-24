@@ -53,7 +53,7 @@ export interface RegisterResult {
   status?: number;
 }
 
-export function register(account: string, email: string, password: string): RegisterResult {
+export function register(account: string, email: string, password: string, agreed = false): RegisterResult {
   account = account.trim();
   if (!validAccount(account)) {
     return { ok: false, status: 422, error: 'Username must be 2 to 24 letters, numbers, _ or -.' };
@@ -81,6 +81,8 @@ export function register(account: string, email: string, password: string): Regi
     .run(lower, account, email || null, hashPassword(password), now, role, now);
   db.prepare('INSERT OR IGNORE INTO profiles (accountLower, account, updatedAt) VALUES (?,?,?)')
     .run(lower, account, now);
+  // Note when they agreed to the terms and privacy notice (the sign-up form will not send the form without it).
+  if (agreed) db.prepare('UPDATE accounts SET termsAcceptedAt = ? WHERE accountLower = ?').run(now, lower);
   return { ok: true, account, role };
 }
 
@@ -160,6 +162,16 @@ export function logout(token: string | undefined): void {
 
 export function endSessions(account: string): void {
   db.prepare('DELETE FROM sessions WHERE accountLower = ?').run(account.toLowerCase());
+}
+
+/** Is this the right password for the account? (Used before something that cannot be undone.) */
+export function verifyAccountPassword(account: string, password: string): boolean {
+  const row = db.prepare('SELECT passHash FROM accounts WHERE accountLower = ?').get(account.toLowerCase()) as { passHash: string } | undefined;
+  if (!row) {
+    verifyPassword(password, DUMMY_HASH);
+    return false;
+  }
+  return verifyPassword(password, row.passHash);
 }
 
 export type PasswordChange = { ok: true } | { ok: false; status: number; error: string };

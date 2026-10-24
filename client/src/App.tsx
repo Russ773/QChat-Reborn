@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BotInfo, Profile, RoomRole } from '@qchat/shared';
 import { dmKey, isDmKey, type ChatEvent } from './types.js';
 import {
+  fetchMyData,
   getProfile,
   getToken,
   logout,
@@ -25,6 +26,7 @@ import { LogoMark, Wordmark } from './components/Logo.js';
 import { MediaPanel } from './components/MediaPanel.js';
 import { NewMessageModal } from './components/NewMessageModal.js';
 import { PasswordModal } from './components/PasswordModal.js';
+import { DeleteAccountModal } from './components/DeleteAccountModal.js';
 import { PreferencesModal } from './components/PreferencesModal.js';
 import { ProfileModal } from './components/ProfileModal.js';
 import { ReportModal } from './components/ReportModal.js';
@@ -68,6 +70,7 @@ export default function App() {
   const [modal, setModal] = useState<ModalTarget | null>(null);
   const [showPrefs, setShowPrefs] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [showDelete, setShowDelete] = useState(false);
   const [showRooms, setShowRooms] = useState(false);
   const [showNewDm, setShowNewDm] = useState(false);
   const [showAddFriend, setShowAddFriend] = useState(false);
@@ -377,7 +380,21 @@ export default function App() {
       { label: 'Change password', icon: '🔑', onClick: () => setShowPassword(true) },
     ];
     if (role === 'admin') items.push({ label: 'Admin area', icon: '🛠️', onClick: () => go('admin') });
-    items.push({ kind: 'divider' }, { label: 'Log out', icon: '⏻', danger: true, onClick: doLogout });
+    items.push(
+      { kind: 'divider' },
+      {
+        label: 'Download my data',
+        icon: '📥',
+        onClick: () => {
+          if (token) fetchMyData(token).catch((e: Error) => setToast(e.message));
+        },
+      },
+      { label: 'Delete my account', icon: '🗑️', danger: true, onClick: () => setShowDelete(true) },
+      { label: 'Terms of use', icon: '📄', onClick: () => window.open('/terms', '_blank', 'noopener') },
+      { label: 'Privacy notice', icon: '🔒', onClick: () => window.open('/privacy', '_blank', 'noopener') },
+      { kind: 'divider' },
+      { label: 'Log out', icon: '⏻', danger: true, onClick: doLogout },
+    );
     setMenu({ x: r.left, y: r.bottom + 6, items });
   };
 
@@ -744,6 +761,17 @@ export default function App() {
       {botCard && <BotModal bot={botCard} onClose={() => setBotCard(null)} />}
       {toast && <div className="toast" role="status">{toast}</div>}
       {showPassword && token && <PasswordModal token={token} onClose={() => setShowPassword(false)} />}
+      {showDelete && token && (
+        <DeleteAccountModal
+          token={token}
+          isAdmin={role === 'admin'}
+          onClose={() => setShowDelete(false)}
+          onDeleted={() => {
+            setToken(null);
+            window.location.assign('/');
+          }}
+        />
+      )}
       {showPrefs && token && (
         <PreferencesModal
           token={token}

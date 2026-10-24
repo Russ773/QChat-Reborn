@@ -311,6 +311,20 @@ export function trimMessages(keep: number): void {
   db.prepare('DELETE FROM reactions WHERE messageId NOT IN (SELECT id FROM messages)').run();
 }
 
+/** Keep only the newest `keep` private messages in each conversation. */
+export function trimDms(keep: number): void {
+  db.prepare(
+    `DELETE FROM dms WHERE seq IN (
+       SELECT seq FROM (
+         SELECT seq, ROW_NUMBER() OVER (
+           PARTITION BY (CASE WHEN fromLower < toLower THEN fromLower || '|' || toLower ELSE toLower || '|' || fromLower END)
+           ORDER BY seq DESC
+         ) AS rn FROM dms
+       ) WHERE rn > ?
+     )`,
+  ).run(keep);
+}
+
 // --- Reactions ---------------------------------------------------------------------
 
 /** Who reacted with what, for a set of messages. */
@@ -537,6 +551,28 @@ export function countUploadsSince(ownerLower: string, since: number): number {
   return (db.prepare('SELECT COUNT(*) AS n FROM uploads WHERE ownerLower = ? AND ts > ?').get(ownerLower, since) as { n: number }).n;
 }
 
+/** Total size of the pictures a member has uploaded, in bytes. */
+export function uploadBytesOf(ownerLower: string): number {
+  return (db.prepare('SELECT COALESCE(SUM(size), 0) AS n FROM uploads WHERE ownerLower = ?').get(ownerLower) as { n: number }).n;
+}
+
+/**
+ * Pictures that no message uses any more (the message was deleted or trimmed, or it was never sent), once they
+ * are older than `olderThan`. The rows are removed here; the caller deletes the files. Returns the file names.
+ */
+export function takeUnusedUploads(olderThan: number): string[] {
+  const rows = db
+    .prepare(
+      `SELECT name FROM uploads WHERE ts < ?
+         AND ('/uploads/' || name) NOT IN (SELECT image FROM messages WHERE image IS NOT NULL AND deleted = 0)
+         AND ('/uploads/' || name) NOT IN (SELECT image FROM reports WHERE image IS NOT NULL)`,
+    )
+    .all(olderThan) as { name: string }[];
+  const del = db.prepare('DELETE FROM uploads WHERE name = ?');
+  for (const r of rows) del.run(r.name);
+  return rows.map((r) => r.name);
+}
+
 // --- Cleanup when an account is deleted -------------------------------------------------
 
 /** Remove everything tied to an account. Returns the upload file names, so the caller can delete the files. */
@@ -551,6 +587,8 @@ export function purgeAccount(account: string): string[] {
   db.prepare('DELETE FROM friends WHERE accountLower = ? OR friendLower = ?').run(l, l);
   db.prepare('DELETE FROM friend_requests WHERE fromLower = ? OR toLower = ?').run(l, l);
   db.prepare('DELETE FROM reactions WHERE accountLower = ?').run(l);
+  db.prepare('DELETE FROM reminders WHERE accountLower = ?').run(l);
+  db.prepare('DELETE FROM trivia_scores WHERE accountLower = ?').run(l);
   db.prepare('UPDATE rooms SET owner = NULL WHERE lower(owner) = ?').run(l);
   const files = (db.prepare('SELECT name FROM uploads WHERE ownerLower = ?').all(l) as { name: string }[]).map((r) => r.name);
   db.prepare('DELETE FROM uploads WHERE ownerLower = ?').run(l);
