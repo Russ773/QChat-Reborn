@@ -22,6 +22,7 @@ safe to run while your own server is running on another port.
 | features | change password, server rooms, topics, polls, reminders, TriviaBot |
 | presence | "left chat" notices and reloads |
 | media | finished videos |
+| moderation | blocked words, the new-member link rule, admin settings for them |
 | account | terms and privacy pages, data export, deleting your account, password reset tool, disk housekeeping |
 | security | headers, passwords, rate limits, sessions, sockets |
 

@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS, MAX_WELCOME, validContact, type SiteSettings } from '@qchat/shared';
+import { DEFAULT_SETTINGS, MAX_BLOCKED_WORDS, MAX_LINK_MINUTES, MAX_WELCOME, validContact, type SiteSettings } from '@qchat/shared';
 import { db } from './db.js';
 
 export function getSettings(): SiteSettings {
@@ -12,6 +12,8 @@ export function getSettings(): SiteSettings {
       else if (key === 'welcomeMessage' && typeof v === 'string') out.welcomeMessage = v;
       else if (key === 'qbotWelcome' && typeof v === 'boolean') out.qbotWelcome = v;
       else if (key === 'qbotCommands' && typeof v === 'boolean') out.qbotCommands = v;
+      else if (key === 'blockedWords' && typeof v === 'string') out.blockedWords = v.slice(0, MAX_BLOCKED_WORDS);
+      else if (key === 'newMemberLinkMinutes' && Number.isInteger(v) && v >= 0 && v <= MAX_LINK_MINUTES) out.newMemberLinkMinutes = v;
       else if (key === 'contactEmail' && typeof v === 'string' && validContact(v)) out.contactEmail = v;
     } catch {
       /* ignore a corrupt row and keep the default */
@@ -27,6 +29,12 @@ export function saveSettings(patch: Record<string, unknown>): SiteSettings {
   if (typeof patch.maintenance === 'boolean') put.run('maintenance', JSON.stringify(patch.maintenance));
   if (typeof patch.contactEmail === 'string' && validContact(patch.contactEmail.trim())) {
     put.run('contactEmail', JSON.stringify(patch.contactEmail.trim()));
+  }
+  if (typeof patch.blockedWords === 'string') {
+    put.run('blockedWords', JSON.stringify(patch.blockedWords.replace(/\r/g, '').trim().slice(0, MAX_BLOCKED_WORDS)));
+  }
+  if (Number.isInteger(patch.newMemberLinkMinutes) && (patch.newMemberLinkMinutes as number) >= 0 && (patch.newMemberLinkMinutes as number) <= MAX_LINK_MINUTES) {
+    put.run('newMemberLinkMinutes', JSON.stringify(patch.newMemberLinkMinutes));
   }
   if (typeof patch.qbotWelcome === 'boolean') put.run('qbotWelcome', JSON.stringify(patch.qbotWelcome));
   if (typeof patch.qbotCommands === 'boolean') put.run('qbotCommands', JSON.stringify(patch.qbotCommands));

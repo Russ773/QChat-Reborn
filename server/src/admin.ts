@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { validAccount, validContact, type AdminStats, type AdminUser, type AuditEntry } from '@qchat/shared';
+import { MAX_BLOCKED_WORDS, MAX_LINK_MINUTES, validAccount, validContact, type AdminStats, type AdminUser, type AuditEntry } from '@qchat/shared';
 import {
   accountExists,
   accountForToken,
@@ -143,6 +143,12 @@ export async function handleAdmin(
       const body = await readBody(req);
       if (typeof body.contactEmail === 'string' && !validContact(body.contactEmail.trim())) {
         return deny(res, 'That does not look like an email address.', 422);
+      }
+      if (body.blockedWords !== undefined && (typeof body.blockedWords !== 'string' || body.blockedWords.length > MAX_BLOCKED_WORDS)) {
+        return deny(res, `The blocked words list can be at most ${MAX_BLOCKED_WORDS} characters.`, 422);
+      }
+      if (body.newMemberLinkMinutes !== undefined && !(Number.isInteger(body.newMemberLinkMinutes) && (body.newMemberLinkMinutes as number) >= 0 && (body.newMemberLinkMinutes as number) <= MAX_LINK_MINUTES)) {
+        return deny(res, `Minutes must be a whole number from 0 to ${MAX_LINK_MINUTES}.`, 422);
       }
       const after = saveSettings(body);
       const changed = (Object.keys(after) as (keyof typeof after)[]).filter((k) => after[k] !== before[k]);

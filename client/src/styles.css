@@ -943,3 +943,4 @@ button.profile-chip:hover { filter: none; transform: none; }
 .legal-body li { margin: 4px 0; }
 .legal-body a { color: var(--accent, #7ee0ff); }
 .legal-updated { color: var(--dim); margin: 0 0 8px; }
+.field-help { font-size: 0.78rem; font-weight: 500; color: var(--faint); line-height: 1.4; }

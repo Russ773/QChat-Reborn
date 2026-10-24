@@ -274,7 +274,7 @@ function Members({ token, me, notify, ask }: TabProps) {
       ask({
         title: `Reset password for ${u.account}`,
         message: 'They will be logged out everywhere and must use the new password. Tell them what it is.',
-        input: { label: 'New password (6 or more characters)', type: 'text', placeholder: 'new password' },
+        input: { label: 'New password (8 or more characters)', type: 'text', placeholder: 'new password' },
         confirmLabel: 'Reset password',
         run: async (pw) => {
           await adminApi.resetPassword(token, u.account, pw);
@@ -767,6 +767,27 @@ function Settings({ token, notify, ask }: TabProps) {
           />
         </label>
         <label className="dialog-field">
+          Blocked words and phrases
+          <textarea
+            rows={4}
+            maxLength={2000}
+            value={form.blockedWords}
+            onChange={(e) => setForm({ ...form, blockedWords: e.target.value })}
+            placeholder={'One per line. A message containing one is not sent. Whole words only, and look-alikes such as h3llo are caught. Admins are exempt.'}
+          />
+        </label>
+        <label className="dialog-field">
+          New members cannot post links for (minutes)
+          <input
+            type="number"
+            min={0}
+            max={1440}
+            value={form.newMemberLinkMinutes}
+            onChange={(e) => setForm({ ...form, newMemberLinkMinutes: Math.max(0, Math.min(1440, Math.round(Number(e.target.value) || 0))) })}
+          />
+          <span className="field-help">Counted from when the account was made. 0 turns the rule off. Stops spam from brand new accounts.</span>
+        </label>
+        <label className="dialog-field">
           Contact email
           <input
             type="email"
@@ -1043,6 +1064,19 @@ function Reports({ token, notify, ask }: TabProps) {
   const [filter, setFilter] = useState<'open' | 'all'>('open');
   const reports = useLoad<AdminReport[]>(() => adminApi.reports(token, filter), [token, filter]);
 
+  const suspendAuthor = (r: AdminReport) =>
+    ask({
+      title: `Suspend ${r.author}?`,
+      message: 'They are disconnected now and cannot log in until you unsuspend them in Members. The report stays open until you close it.',
+      input: { label: 'Reason (they will see this)', placeholder: 'e.g. spamming the lobby', optional: true },
+      confirmLabel: 'Suspend',
+      danger: true,
+      run: async (reason) => {
+        await adminApi.suspend(token, r.author, true, reason);
+        notify(`${r.author} was suspended.`);
+      },
+    });
+
   const resolve = (r: AdminReport, action: 'delete' | 'dismiss' | 'handled') => {
     const go = async () => {
       await adminApi.resolveReport(token, r.id, action);
@@ -1099,6 +1133,7 @@ function Reports({ token, notify, ask }: TabProps) {
           {r.status === 'open' ? (
             <div className="report-actions">
               <button className="mini danger" onClick={() => resolve(r, 'delete')}>Delete message</button>
+              <button className="mini danger" onClick={() => suspendAuthor(r)}>Suspend author</button>
               <button className="mini" onClick={() => resolve(r, 'handled')}>Mark handled</button>
               <button className="mini" onClick={() => resolve(r, 'dismiss')}>Dismiss</button>
             </div>

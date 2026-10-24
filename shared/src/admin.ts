@@ -14,6 +14,10 @@ export interface SiteSettings {
   qbotCommands: boolean;
   /** Where members can reach the administrators (shown on the terms and privacy pages). Empty for none. */
   contactEmail: string;
+  /** Words and phrases that cannot be posted (one per line). Administrators are exempt. */
+  blockedWords: string;
+  /** Members cannot post links until their account is this many minutes old (0 for no rule). */
+  newMemberLinkMinutes: number;
 }
 
 export const DEFAULT_SETTINGS: SiteSettings = {
@@ -23,10 +27,14 @@ export const DEFAULT_SETTINGS: SiteSettings = {
   qbotWelcome: true,
   qbotCommands: true,
   contactEmail: '',
+  blockedWords: '',
+  newMemberLinkMinutes: 10,
 };
 
 export const MAX_WELCOME = 300;
 export const MAX_CONTACT = 120;
+export const MAX_BLOCKED_WORDS = 2000;
+export const MAX_LINK_MINUTES = 1440;
 
 /** An email address, or empty for none. */
 export const validContact = (s: string): boolean =>

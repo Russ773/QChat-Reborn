@@ -51,6 +51,7 @@ import {
   scoreFor,
   topScores,
 } from '../trivia.js';
+import { screenText } from '../filter.js';
 import { WS_LOGIN_TIMEOUT_MS } from '../security.js';
 import { UPLOAD_NAME_RE, removeUploadFiles } from '../uploads.js';
 import * as store from './store.js';
@@ -462,6 +463,7 @@ export class ChatServer {
     if (this.tooFast(conn)) return;
     const clean = sanitize(text);
     if (!clean && !extra.image) return;
+    if (this.screened(conn, clean)) return;
     const line = store.addMessage(room, conn.nick, kind, clean, {
       replyTo: extra.replyTo,
       image: extra.image ? `/uploads/${extra.image}` : undefined,
@@ -703,6 +705,7 @@ export class ChatServer {
     if (this.isMuted(conn, room) || this.tooFast(conn)) return;
     const clean = sanitize(text);
     if (!clean && !msg.image) return; // a picture can have its caption removed; text cannot be emptied
+    if (this.screened(conn, clean)) return;
     const edited = store.editMessage(id, clean);
     this.broadcast(room, { t: 'edited', room, id, text: clean, edited });
   }
@@ -908,6 +911,7 @@ export class ChatServer {
     if (this.tooFast(conn)) return;
     const clean = sanitize(body);
     if (!clean) return;
+    if (this.screened(conn, clean)) return;
 
     const msg = store.addDm(me, target.account, kind, clean);
     for (const c of [...this.connsOf(me), ...this.connsOf(target.account)]) this.send(c, { t: 'dm', msg });
@@ -1189,6 +1193,20 @@ export class ChatServer {
   // --- Roles and permissions -------------------------------------------------------
 
   /** 4 admin, 3 room owner, 2 room moderator, 0 everyone else. */
+  /**
+   * Apply the administrators' blocked words and the new-member link rule. Tells the sender why and returns
+   * true when the message must not be sent.
+   */
+  private screened(conn: Conn, text: string): boolean {
+    const account = conn.account!;
+    const joined = this.policy.lookup(account)?.createdAt ?? 0;
+    const why = screenText(text, Date.now() - joined, this.policy.isAdmin(account));
+    if (!why) return false;
+    this.send(conn, { t: 'error', text: why });
+    this.log(`blocked a message from ${account}`);
+    return true;
+  }
+
   private rank(room: string, account: string): number {
     if (this.policy.isAdmin(account)) return 4;
     const lower = account.toLowerCase();

@@ -59,6 +59,7 @@ export const TERMS: Section[] = [
     body: [
       'Room owners and moderators can mute, remove or ban people from their rooms and delete messages. Administrators can do all of that across the whole site, and can also remove rooms and suspend or delete accounts.',
       'You can report a message using the flag button on it, and an administrator will look at it. We cannot read everything, so we cannot promise to catch everything, but we act when we are told.',
+      'To help keep things tidy, administrators can block certain words, and new accounts cannot post links for a short while after they sign up. A message that breaks one of these rules is simply not sent.',
       'We may remove content or accounts that break these terms. For small things we will usually give a warning first. For serious things we will not.',
     ],
   },

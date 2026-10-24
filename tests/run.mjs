@@ -77,6 +77,15 @@ const GROUPS = {
     env: RELAXED,
     steps: [test('media.mjs')],
   },
+  moderation: {
+    about: 'blocked words, the new-member link rule, and the admin settings for them',
+    env: RELAXED,
+    steps: [
+      test('moderation.mjs', 'a'),
+      sql("UPDATE accounts SET createdAt = 1000 WHERE accountLower = 'oldie';"),
+      test('moderation.mjs', 'b'),
+    ],
+  },
   account: {
     about: 'terms and privacy pages, data export, deleting your account, password reset tool, disk housekeeping',
     env: RELAXED,
