@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { AdminReport, ChatLine, Dm, DmThread, ReplyRef, RoomTopic } from '@qchat/shared';
+import type { AdminReport, ChatLine, Dm, DmThread, MediaProvider, PinInfo, RadioTrack, ReplyRef, RoomRules, RoomTopic } from '@qchat/shared';
 import { db } from '../db.js';
 
 const now = () => Date.now();
@@ -12,13 +12,19 @@ export interface RoomRow {
   topic: string | null;
   topicBy: string | null;
   topicAt: number | null;
+  rules: string | null;
+  rulesBy: string | null;
+  rulesAt: number | null;
   permanent: boolean;
+  radioOn: boolean;
+  radioPos: number;
+  videoOn: boolean;
   createdAt: number;
   lastActive: number;
 }
 
-type RawRoom = Omit<RoomRow, 'permanent'> & { permanent: number };
-const toRoom = (r: RawRoom): RoomRow => ({ ...r, permanent: !!r.permanent });
+type RawRoom = Omit<RoomRow, 'permanent' | 'radioOn' | 'videoOn'> & { permanent: number; radioOn: number; videoOn: number };
+const toRoom = (r: RawRoom): RoomRow => ({ ...r, permanent: !!r.permanent, radioOn: !!r.radioOn, videoOn: !!r.videoOn });
 
 export function ensureBuiltInRooms(names: string[]): void {
   const ins = db.prepare(
@@ -66,6 +72,75 @@ export function setTopic(name: string, text: string | null, by: string): void {
     .run(text, text ? by : null, text ? now() : null, name);
 }
 
+export function rulesOf(room: RoomRow | undefined): RoomRules | null {
+  return room && room.rules ? { text: room.rules, by: room.rulesBy ?? '', at: room.rulesAt ?? 0 } : null;
+}
+
+export function setRules(name: string, text: string | null, by: string): void {
+  db.prepare('UPDATE rooms SET rules = ?, rulesBy = ?, rulesAt = ? WHERE name = ?')
+    .run(text, text ? by : null, text ? now() : null, name);
+}
+
+// --- Room radio ------------------------------------------------------------------
+
+export function radioTracks(room: string): RadioTrack[] {
+  return db.prepare('SELECT id, provider, ref, title FROM radio_tracks WHERE room = ? ORDER BY id').all(room) as unknown as RadioTrack[];
+}
+
+export function addRadioTrack(room: string, provider: MediaProvider, ref: string, title: string): void {
+  db.prepare('INSERT INTO radio_tracks (room, provider, ref, title) VALUES (?, ?, ?, ?)').run(room, provider, ref, title);
+}
+
+export function removeRadioTrack(room: string, id: number): boolean {
+  return Number(db.prepare('DELETE FROM radio_tracks WHERE room = ? AND id = ?').run(room, id).changes) > 0;
+}
+
+export function clearRadioTracks(room: string): void {
+  db.prepare('DELETE FROM radio_tracks WHERE room = ?').run(room);
+  db.prepare('UPDATE rooms SET radioPos = 0 WHERE name = ?').run(room);
+}
+
+export function setVideo(room: string, on: boolean): void {
+  db.prepare('UPDATE rooms SET videoOn = ? WHERE name = ?').run(on ? 1 : 0, room);
+}
+
+export function setRadio(room: string, on: boolean): void {
+  db.prepare('UPDATE rooms SET radioOn = ? WHERE name = ?').run(on ? 1 : 0, room);
+}
+
+export function setRadioPos(room: string, pos: number): void {
+  db.prepare('UPDATE rooms SET radioPos = ? WHERE name = ?').run(pos, room);
+}
+
+// --- Pinned messages ------------------------------------------------------------
+
+/** The room's pinned messages, newest pin first. A pin whose message was deleted is not shown. */
+export function pinsOf(room: string): PinInfo[] {
+  const rows = db
+    .prepare(
+      `SELECT p.messageId AS id, m.fromName AS "from", m.text AS text, m.ts AS ts, m.image AS image, p.pinnedBy AS pinnedBy, p.ts AS pinnedAt
+         FROM pins p JOIN messages m ON m.id = p.messageId
+        WHERE p.room = ? AND m.deleted = 0 ORDER BY p.ts DESC`,
+    )
+    .all(room) as unknown as (Omit<PinInfo, 'image'> & { image: string | null })[];
+  return rows.map((r) => ({
+    id: r.id, from: r.from, text: r.text, ts: r.ts, pinnedBy: r.pinnedBy, pinnedAt: r.pinnedAt,
+    ...(r.image ? { image: r.image } : {}),
+  }));
+}
+
+export function isPinned(room: string, id: string): boolean {
+  return !!db.prepare('SELECT 1 FROM pins WHERE room = ? AND messageId = ?').get(room, id);
+}
+
+export function pinMessage(room: string, id: string, by: string): void {
+  db.prepare('INSERT OR IGNORE INTO pins (room, messageId, pinnedBy, ts) VALUES (?, ?, ?, ?)').run(room, id, by, now());
+}
+
+export function unpinMessage(room: string, id: string): void {
+  db.prepare('DELETE FROM pins WHERE room = ? AND messageId = ?').run(room, id);
+}
+
 /** A server owned room: kept for good, no owner (administrators run it), optionally with a topic. */
 export function createServerRoom(name: string, topic: string | null, by: string): RoomRow {
   db.prepare('INSERT INTO rooms (name, owner, permanent, createdAt, lastActive) VALUES (?, NULL, 1, ?, ?)').run(name, now(), now());
@@ -90,7 +165,7 @@ export function seedDefaultTopics(topics: Record<string, string>): void {
 /** Delete a room and everything attached to it. */
 export function deleteRoom(name: string): void {
   db.prepare('DELETE FROM reactions WHERE messageId IN (SELECT id FROM messages WHERE room = ?)').run(name);
-  for (const t of ['messages', 'room_mods', 'room_bans', 'room_mutes']) {
+  for (const t of ['messages', 'room_mods', 'room_bans', 'room_mutes', 'pins', 'radio_tracks']) {
     db.prepare(`DELETE FROM ${t} WHERE room = ?`).run(name);
   }
   db.prepare('DELETE FROM rooms WHERE name = ?').run(name);
@@ -98,6 +173,7 @@ export function deleteRoom(name: string): void {
 
 /** Keep the room but throw away its messages. */
 export function clearRoom(name: string): void {
+  db.prepare('DELETE FROM pins WHERE room = ?').run(name);
   db.prepare('DELETE FROM reactions WHERE messageId IN (SELECT id FROM messages WHERE room = ?)').run(name);
   db.prepare('DELETE FROM messages WHERE room = ?').run(name);
 }
@@ -175,6 +251,11 @@ export function addMute(room: string, accountLower: string, until: number | null
 }
 export function removeMute(room: string, accountLower: string): boolean {
   return Number(db.prepare('DELETE FROM room_mutes WHERE room = ? AND accountLower = ?').run(room, accountLower).changes) > 0;
+}
+
+/** Write a line in the admin audit log for something the server did by itself. */
+export function logAudit(action: string, target: string | null, detail: string | null): void {
+  db.prepare('INSERT INTO audit (ts, admin, action, target, detail) VALUES (?,?,?,?,?)').run(now(), 'QChat', action, target, detail);
 }
 
 // --- Room messages ------------------------------------------------------------------
@@ -309,6 +390,7 @@ export function trimMessages(keep: number): void {
     if (c) del.run(room, c.seq);
   }
   db.prepare('DELETE FROM reactions WHERE messageId NOT IN (SELECT id FROM messages)').run();
+  db.prepare('DELETE FROM pins WHERE messageId NOT IN (SELECT id FROM messages)').run();
 }
 
 /** Keep only the newest `keep` private messages in each conversation. */

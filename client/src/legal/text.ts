@@ -42,6 +42,7 @@ export const TERMS: Section[] = [
         'share other people\'s private information, or pictures of them, without their permission',
         'post spam, scams, malware, or links meant to trick people',
         'post pictures, videos or writing that you do not have the right to share',
+        'record, screenshot or share someone else\'s live video without their permission, or show anything on camera that is unsuitable for a chat open to people aged 13 and over',
         'use the site to break the law',
         'try to break, overload or get into parts of the site that are not meant for you, or find a way round a ban, mute or limit',
       ],
@@ -65,7 +66,7 @@ export const TERMS: Section[] = [
   },
   {
     title: 'Videos and other people\'s services',
-    body: ['Videos played in rooms come from YouTube. We do not host them, and they are covered by YouTube\'s own terms. We are not responsible for what is in them.'],
+    body: ['Videos, music and streams played in rooms come from YouTube, Vimeo, SoundCloud and Twitch. We do not host them, and they are covered by those services\' own terms. We are not responsible for what is in them.'],
   },
   {
     title: 'Private messages',
@@ -106,8 +107,8 @@ export const PRIVACY: Section[] = [
     body: [
       [
         'Your account: your username and your password. The password is kept only in a scrambled form that cannot be turned back into your password. We also note when you created the account and last signed in, and when you agreed to the terms.',
-        'An email address, only if you choose to give one. At the moment we do not send any emails. It can be seen by administrators.',
-        'Your profile, only what you choose to add: display name, pronouns, status, age, gender, location, interests, a bio, a photo, your colours and your preferences. Other members see the parts you leave visible in Preferences.',
+        'An email address, only if you choose to give one. We use it only to send you a link to confirm it, links to reset your password, and a notice if your password or address is changed. It is sent from our own mail server, never shared, and can be seen by administrators.',
+        'Your profile, only what you choose to add: display name, pronouns, status, age, birthday (day and month only, and only shown if you tick it), gender, location, interests, a bio, a photo, your colours and your preferences. Other members see the parts you leave visible in Preferences.',
         'What you do on QChat: your messages in rooms, your private messages, pictures you share, reactions, who you are friends with and who you have blocked, reports you make, reminders you set with QBot, and your trivia scores.',
         'Technical information: your internet address (IP address) is seen by our servers whenever you connect. We use it to stop abuse, such as people guessing passwords or making lots of accounts, and failed sign in attempts are written to a log with it. It is not shown to other members.',
       ],
@@ -117,7 +118,10 @@ export const PRIVACY: Section[] = [
     title: 'Cookies and tracking',
     body: [
       'QChat does not set cookies of its own and does not use advertising or analytics. Your sign in is kept in your browser\'s session storage, which is cleared when you close the window, so you sign in again next time.',
-      'When you play a video, YouTube loads in the page and may set its own cookies or collect information, under Google\'s privacy policy. The typeface is served from this site, so opening QChat does not contact Google.',
+      'When a video, track or stream is playing in a room, the player for that service (YouTube, Vimeo, SoundCloud or Twitch) loads in the page. That service may set its own cookies and see your IP address, under its own privacy policy. Nothing from them loads until something from that service is played. The typeface is served from this site, so opening QChat does not contact Google.',
+      'WeatherBot sends the name of the place you ask about (for example London) to Open-Meteo to get the weather. It never sends who is asking.',
+      'If a room owner switches on live video, anyone who joins the call connects directly to the other people in it. That means they can see your internet address, and QChat does not see or record the video. To set up that connection your browser asks a public connection server (Cloudflare\'s) for its own address, which means Cloudflare sees your internet address when you join a call. Nothing is sent unless you join.',
+      'To show the title of a link that is queued or played, the QChat server asks that service for the title. This sends only the link, never anything about you.',
     ],
   },
   {

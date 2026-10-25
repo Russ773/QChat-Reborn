@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { SearchState } from '../types.js';
-import { colorForNick } from '../colors.js';
+import { nickInk } from '../colors.js';
 
 interface Props {
   room: string;
@@ -46,7 +46,7 @@ export function SearchPanel({ room, result, onSearch, onClose }: Props) {
           {result.events.map((e) => (
             <div className="sr-row" key={e.id}>
               <div className="sr-head">
-                <b style={{ color: colorForNick(e.from ?? '') }}>{e.from}</b>
+                <b style={{ color: nickInk(e.from ?? '') }}>{e.from}</b>
                 <span className="sr-time">
                   {new Date(e.ts).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
                 </span>

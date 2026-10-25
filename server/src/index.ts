@@ -6,10 +6,14 @@ import { WebSocketServer } from 'ws';
 import { accountForToken, ensureAdmins, isAdmin, lookupAccount, pruneSessions } from './accounts.js';
 import { avatarsDir } from './avatars.js';
 import { handleApi } from './api.js';
+import { databaseOk, installErrorHandlers } from './monitor.js';
+import { prune as pruneStats } from './stats.js';
+import { pruneEmailTokens } from './emails.js';
 import { ChatServer } from './chat/server.js';
 import { getPrefs } from './profiles.js';
 import { MAX_WS_PER_IP, clientIp, originAllowed, securityHeaders, wsOpensByIp } from './security.js';
 import { getSettings } from './settings.js';
+import { SOUND_MIME, SOUND_NAME_RE, soundsDir } from './sounds.js';
 import { UPLOAD_MIME, UPLOAD_NAME_RE, uploadsDir } from './uploads.js';
 
 const HTTP_PORT = Number(process.env.HTTP_PORT ?? 8080);
@@ -18,6 +22,7 @@ const HTTP_PORT = Number(process.env.HTTP_PORT ?? 8080);
 const HOST = process.env.HOST ?? (process.env.NODE_ENV === 'production' ? '127.0.0.1' : undefined);
 const log = (msg: string) => console.log(`[qchat] ${new Date().toISOString()} ${msg}`);
 
+installErrorHandlers(log);
 for (const name of ensureAdmins()) log(`promoted ${name} to administrator (ADMIN_ACCOUNTS)`);
 
 const chat = new ChatServer(log, {
@@ -53,7 +58,9 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<vo
   // sets one of these itself (the uploads, which need a stricter policy) simply overrides it.
   for (const [name, value] of Object.entries(securityHeaders(req))) res.setHeader(name, value);
   if (req.url === '/healthz') {
-    res.writeHead(200, { 'content-type': 'text/plain' }).end('ok');
+    // A broken database is reported as down, so an outside monitor notices.
+    if (databaseOk()) res.writeHead(200, { 'content-type': 'text/plain' }).end('ok');
+    else res.writeHead(503, { 'content-type': 'text/plain' }).end('database error');
     return;
   }
   if (await handleApi(req, res, chat)) return;
@@ -64,6 +71,10 @@ async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<vo
   }
   if (reqPath.startsWith('/uploads/')) {
     serveUpload(res, reqPath);
+    return;
+  }
+  if (reqPath.startsWith('/sounds/')) {
+    serveSound(res, reqPath);
     return;
   }
   if (!existsSync(clientDir)) {
@@ -102,6 +113,23 @@ function serveAvatar(res: ServerResponse, urlPath: string): void {
   createReadStream(file).pipe(res);
 }
 
+/** Soundboard clips: only names we generated, only as the audio type they really are. */
+function serveSound(res: ServerResponse, urlPath: string): void {
+  const name = urlPath.slice('/sounds/'.length);
+  const file = join(soundsDir, name);
+  if (!SOUND_NAME_RE.test(name) || !existsSync(file)) {
+    res.writeHead(404).end('not found');
+    return;
+  }
+  res.writeHead(200, {
+    'content-type': SOUND_MIME[extname(name).slice(1)] ?? 'application/octet-stream',
+    'cache-control': 'public, max-age=31536000, immutable',
+    'x-content-type-options': 'nosniff',
+    'content-security-policy': "default-src 'none'; sandbox",
+  });
+  createReadStream(file).pipe(res);
+}
+
 /** Shared pictures. Only names we generated are served, and only as the image type they really are. */
 function serveUpload(res: ServerResponse, urlPath: string): void {
   const name = urlPath.slice('/uploads/'.length);
@@ -132,7 +160,8 @@ const http = createServer((req, res) => {
 const wss = new WebSocketServer({
   server: http,
   path: '/ws',
-  maxPayload: 16 * 1024,
+  // Chat messages are small; only the set-up messages for video can be larger (see ChatServer.accept).
+  maxPayload: 32 * 1024,
   // Only our own pages may open a socket from a browser.
   verifyClient: (info, done) => {
     const ok = originAllowed(info.origin, info.req);
@@ -165,6 +194,8 @@ wss.on('connection', (ws, req) => {
 const prune = () => {
   const n = pruneSessions();
   if (n > 0) log(`removed ${n} lapsed login(s)`);
+  pruneStats();
+  pruneEmailTokens();
 };
 prune();
 setInterval(prune, 3600 * 1000).unref();

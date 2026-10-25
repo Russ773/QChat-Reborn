@@ -52,6 +52,8 @@ export interface SiteStatus {
   maintenance: boolean;
   /** Where to reach the administrators ('' when not set). */
   contactEmail?: string;
+  /** Can this site send email (for confirming an address and resetting a password)? */
+  mailEnabled?: boolean;
 }
 
 export function siteStatus(): Promise<SiteStatus> {
@@ -76,7 +78,7 @@ export function login(account: string, password: string): Promise<AuthResult> {
 
 export function me(
   token: string,
-): Promise<{ account: string; role: Role; profile: Profile | null; prefs: ProfilePrefs }> {
+): Promise<{ account: string; role: Role; profile: Profile | null; prefs: ProfilePrefs; email: string | null; emailVerified: boolean }> {
   return jreq('/api/me', { headers: authHeaders(token) });
 }
 
@@ -108,6 +110,24 @@ export function uploadImage(token: string, file: Blob): Promise<{ name: string; 
 /** Change your own password. Resolves when it worked, rejects with a readable message when not. */
 export async function changePassword(token: string, current: string, next: string): Promise<void> {
   await jreq('/api/password', { method: 'POST', headers: jsonAuth(token), body: JSON.stringify({ current, next }) });
+}
+
+/** Ask for a password reset link (always answers the same, so it never reveals who has an account). */
+export async function forgotPassword(identifier: string): Promise<void> {
+  await jreq('/api/password/forgot', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ identifier }) });
+}
+
+export function resetPassword(token: string, password: string): Promise<{ account: string }> {
+  return jreq('/api/password/reset', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token, password }) });
+}
+
+export function confirmEmail(token: string): Promise<{ email: string }> {
+  return jreq('/api/email/confirm', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token }) });
+}
+
+/** Add or change your email (it counts once its link is opened), or remove it with an empty address. */
+export function setEmail(token: string, email: string, password: string): Promise<{ pending?: string; removed?: boolean }> {
+  return jreq('/api/email', { method: 'POST', headers: jsonAuth(token), body: JSON.stringify({ email, password }) });
 }
 
 /** Download everything QChat holds about you, as a JSON file. */

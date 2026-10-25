@@ -12,6 +12,9 @@ export function getSettings(): SiteSettings {
       else if (key === 'welcomeMessage' && typeof v === 'string') out.welcomeMessage = v;
       else if (key === 'qbotWelcome' && typeof v === 'boolean') out.qbotWelcome = v;
       else if (key === 'qbotCommands' && typeof v === 'boolean') out.qbotCommands = v;
+      else if (key === 'webcamsEnabled' && typeof v === 'boolean') out.webcamsEnabled = v;
+      else if (key === 'dailyPost' && typeof v === 'boolean') out.dailyPost = v;
+      else if (key === 'autoMuteSpam' && typeof v === 'boolean') out.autoMuteSpam = v;
       else if (key === 'blockedWords' && typeof v === 'string') out.blockedWords = v.slice(0, MAX_BLOCKED_WORDS);
       else if (key === 'newMemberLinkMinutes' && Number.isInteger(v) && v >= 0 && v <= MAX_LINK_MINUTES) out.newMemberLinkMinutes = v;
       else if (key === 'contactEmail' && typeof v === 'string' && validContact(v)) out.contactEmail = v;
@@ -36,6 +39,9 @@ export function saveSettings(patch: Record<string, unknown>): SiteSettings {
   if (Number.isInteger(patch.newMemberLinkMinutes) && (patch.newMemberLinkMinutes as number) >= 0 && (patch.newMemberLinkMinutes as number) <= MAX_LINK_MINUTES) {
     put.run('newMemberLinkMinutes', JSON.stringify(patch.newMemberLinkMinutes));
   }
+  if (typeof patch.webcamsEnabled === 'boolean') put.run('webcamsEnabled', JSON.stringify(patch.webcamsEnabled));
+  if (typeof patch.dailyPost === 'boolean') put.run('dailyPost', JSON.stringify(patch.dailyPost));
+  if (typeof patch.autoMuteSpam === 'boolean') put.run('autoMuteSpam', JSON.stringify(patch.autoMuteSpam));
   if (typeof patch.qbotWelcome === 'boolean') put.run('qbotWelcome', JSON.stringify(patch.qbotWelcome));
   if (typeof patch.qbotCommands === 'boolean') put.run('qbotCommands', JSON.stringify(patch.qbotCommands));
   if (typeof patch.welcomeMessage === 'string') {

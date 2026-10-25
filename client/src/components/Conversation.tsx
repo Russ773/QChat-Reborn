@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { COMMANDS, type BotInfo } from '@qchat/shared';
 import type { ChatEvent } from '../types.js';
+import { SHORTCODES, suggestEmoji } from '../emojiShortcodes.js';
 import { EmojiPicker } from './EmojiPicker.js';
 import { Message } from './Message.js';
 
@@ -31,13 +32,22 @@ interface Props {
   onEdit: (id: string, text: string) => void;
   onDelete: (id: string) => void;
   onProfile: (name: string) => void;
+  /** The pinned messages and rules, shown above the conversation. */
+  notes?: ReactNode;
   /** The bots in this room, to show their pictures on what they said. */
   bots?: BotInfo[];
+  /** Add a link from the chat to the room's queue. */
+  onEnqueue?: (url: string) => void;
+  /** Names that @ can complete (the people in the room, and its bots). */
+  mentionable?: string[];
   onClear?: () => void;
   /** Room-only extras: replies, reactions, reports and pictures. */
   rich?: {
     onReact: (id: string, emoji: string) => void;
     onReport: (id: string) => void;
+    /** Moderators: pin or unpin a message. */
+    onPin?: (id: string, pin: boolean) => void;
+    pinnedIds?: string[];
     /** Upload a picture and return its stored name. */
     onUpload: (file: File) => Promise<string>;
   };
@@ -58,6 +68,11 @@ const snippet = (e: ChatEvent) => (e.text || (e.image ? 'a picture' : '')).slice
 
 export function Conversation(p: Props) {
   const [draft, setDraft] = useState('');
+  const [caret, setCaret] = useState(0);
+  // Where the caret should sit once a suggestion or an emoji has been put into the text.
+  const wantCaret = useRef<number | null>(null);
+  const [pick, setPick] = useState(0);
+  const [dismissed, setDismissed] = useState('');
   const [replyTo, setReplyTo] = useState<ChatEvent | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -97,6 +112,13 @@ export function Conversation(p: Props) {
     last.current = { firstId, height: el.scrollHeight, count: p.events.length };
   }, [p.events]);
 
+  useLayoutEffect(() => {
+    if (wantCaret.current !== null) {
+      input.current?.setSelectionRange(wantCaret.current, wantCaret.current);
+      wantCaret.current = null;
+    }
+  }, [draft]);
+
   const onScroll = () => {
     const el = scroller.current;
     if (el) stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
@@ -112,6 +134,59 @@ export function Conversation(p: Props) {
     }).slice(0, 6);
   }, [draft, p.commandRank]);
 
+  /** What the typing so far could become: a name after @, or an emoji after :. */
+  const suggestions = useMemo(() => {
+    if (draft.startsWith('/')) return [];
+    const before = draft.slice(0, caret);
+    const at = /(^|\s)@([A-Za-z0-9_-]{0,23})$/.exec(before);
+    if (at && p.mentionable) {
+      const q = at[2].toLowerCase();
+      const names = p.mentionable.filter((n) => n.toLowerCase() !== p.me.toLowerCase());
+      const starts = names.filter((n) => n.toLowerCase().startsWith(q));
+      const has = names.filter((n) => !n.toLowerCase().startsWith(q) && n.toLowerCase().includes(q));
+      const from = at.index + at[1].length;
+      return [...starts, ...has].slice(0, 7).map((n) => ({ key: '@' + n, label: n, hint: '', from, insert: `@${n} ` }));
+    }
+    const em = /(^|\s):([a-z0-9_+-]{2,})$/i.exec(before);
+    if (em) {
+      const from = em.index + em[1].length;
+      return suggestEmoji(em[2]).map((s) => ({ key: ':' + s.name, label: s.emoji, hint: `:${s.name}:`, from, insert: s.emoji }));
+    }
+    return [];
+  }, [draft, caret, p.mentionable, p.me]);
+  const showSuggest = suggestions.length > 0 && dismissed !== draft.slice(0, caret);
+  useEffect(() => setPick(0), [suggestions.length, draft.slice(0, caret)]);
+
+  const accept = (s: { from: number; insert: string }) => {
+    const next = draft.slice(0, s.from) + s.insert + draft.slice(caret);
+    const pos = s.from + s.insert.length;
+    setDraft(next);
+    setCaret(pos);
+    wantCaret.current = pos;
+    input.current?.focus();
+  };
+
+  const onKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (showSuggest) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        setPick((i) => (i + (e.key === 'ArrowDown' ? 1 : suggestions.length - 1)) % suggestions.length);
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        accept(suggestions[Math.min(pick, suggestions.length - 1)]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setDismissed(draft.slice(0, caret));
+        return;
+      }
+    }
+    if (e.key === 'Escape') setReplyTo(null);
+  };
+
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     const text = draft.trim();
@@ -124,7 +199,17 @@ export function Conversation(p: Props) {
     setReplyTo(null);
   };
 
-  const onChange = (value: string) => {
+  const onChange = (value: string, at: number) => {
+    // A finished :name: turns into the emoji straight away.
+    const done = /(^|\s):([a-z0-9_+-]{2,}):$/i.exec(value.slice(0, at));
+    const emoji = done ? SHORTCODES[done[2].toLowerCase()] : undefined;
+    if (done && emoji) {
+      const from = done.index + done[1].length;
+      value = value.slice(0, from) + emoji + value.slice(at);
+      at = from + emoji.length;
+      wantCaret.current = at;
+    }
+    setCaret(at);
     setDraft(value);
     const now = Date.now();
     if (value && !value.startsWith('/') && now - lastTypingSent.current > 2500) {
@@ -179,7 +264,8 @@ export function Conversation(p: Props) {
       }}
     >
       {dragging && <div className="drop-hint">Drop a picture to share it</div>}
-      <div className="messages" ref={scroller} onScroll={onScroll}>
+      {p.notes}
+      <div className="messages" ref={scroller} onScroll={onScroll} role="log" aria-label="Messages" aria-relevant="additions">
         {p.more && (
           <button className="load-earlier" onClick={p.onLoadEarlier} disabled={p.loadingMore}>
             {p.loadingMore ? 'Loading…' : 'Load earlier messages'}
@@ -201,6 +287,7 @@ export function Conversation(p: Props) {
               avatar={ev.from ? p.avatarFor(ev.from) : undefined}
               botEmoji={ev.bot ? p.bots?.find((b) => b.name === ev.from)?.emoji : undefined}
               onProfile={p.onProfile}
+              onEnqueue={p.onEnqueue}
               onEdit={editable ? (text) => p.onEdit(ev.id, text) : undefined}
               onDelete={deletable ? () => p.onDelete(ev.id) : undefined}
               onReply={
@@ -213,6 +300,8 @@ export function Conversation(p: Props) {
               }
               onReact={social ? (emoji) => p.rich!.onReact(ev.id, emoji) : undefined}
               onReport={social && !ev.self ? () => p.rich!.onReport(ev.id) : undefined}
+              onPin={social && ev.kind === 'message' && p.rich?.onPin ? () => p.rich!.onPin!(ev.id, !p.rich!.pinnedIds?.includes(ev.id)) : undefined}
+              pinned={!!p.rich?.pinnedIds?.includes(ev.id)}
             />
           );
         })}
@@ -235,6 +324,25 @@ export function Conversation(p: Props) {
             Replying to <b>{replyTo.from}</b>: {snippet(replyTo)}
           </span>
           <button type="button" onClick={() => setReplyTo(null)} aria-label="Cancel reply">✕</button>
+        </div>
+      )}
+
+      {showSuggest && (
+        <div className="cmd-hints" role="listbox" aria-label="Suggestions">
+          {suggestions.map((s, i) => (
+            <button
+              type="button"
+              key={s.key}
+              role="option"
+              aria-selected={i === pick}
+              className={`cmd-hint ${i === pick ? 'picked' : ''}`}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => accept(s)}
+            >
+              <b>{s.label}</b>
+              {s.hint && <span>{s.hint}</span>}
+            </button>
+          ))}
         </div>
       )}
 
@@ -289,9 +397,12 @@ export function Conversation(p: Props) {
         <input
           ref={input}
           value={draft}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(e) => onChange(e.target.value, e.target.selectionStart ?? e.target.value.length)}
+          onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
+          aria-label={p.placeholder}
+          aria-autocomplete="list"
           onPaste={onPaste}
-          onKeyDown={(e) => e.key === 'Escape' && setReplyTo(null)}
+          onKeyDown={onKey}
           placeholder={p.placeholder}
           maxLength={2000}
         />

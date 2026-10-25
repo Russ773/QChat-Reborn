@@ -1,4 +1,4 @@
-import type { AdminBot, AdminReport, AdminRoom, AdminStats, AdminUser, AuditEntry, SiteSettings } from '@qchat/shared';
+import type { AdminBot, DayStat, HealthInfo, AdminReport, AdminRoom, AdminStats, AdminUser, AuditEntry, SiteSettings } from '@qchat/shared';
 import { authHeaders, jreq, jsonAuth } from '../api.js';
 
 const get = (token: string, path: string) => jreq(`/api/admin/${path}`, { headers: authHeaders(token) });
@@ -6,6 +6,18 @@ const post = (token: string, path: string, body: unknown = {}) =>
   jreq(`/api/admin/${path}`, { method: 'POST', headers: jsonAuth(token), body: JSON.stringify(body) });
 
 const enc = encodeURIComponent;
+
+/** A soundboard clip as the admin sees it. */
+export interface AdminSound {
+  id: string;
+  name: string;
+  emoji: string;
+  by: string;
+  status: 'pending' | 'approved';
+  url: string;
+  size: number;
+  ts: number;
+}
 
 export interface BotForm {
   name?: string;
@@ -19,6 +31,11 @@ export interface BotForm {
 export const adminApi = {
   stats: (t: string): Promise<AdminStats> => get(t, 'stats').then((d) => d.stats),
   audit: (t: string): Promise<AuditEntry[]> => get(t, 'audit').then((d) => d.entries),
+  sounds: (t: string): Promise<AdminSound[]> => get(t, 'sounds').then((d) => d.sounds),
+  approveSound: (t: string, id: string) => post(t, `sounds/${id}/approve`),
+  rejectSound: (t: string, id: string) => post(t, `sounds/${id}/reject`),
+  charts: (t: string, days: number): Promise<DayStat[]> => get(t, `charts?days=${days}`).then((d) => d.days),
+  health: (t: string): Promise<HealthInfo> => get(t, 'health').then((d) => d.health),
 
   reports: (t: string, status: 'open' | 'all'): Promise<AdminReport[]> =>
     get(t, `reports?status=${status}`).then((d) => d.reports),

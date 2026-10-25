@@ -54,6 +54,14 @@ do when you put it on the internet.
 * There is no email check or CAPTCHA at sign up, and no password reset by email. Admins reset
   passwords by hand, and a forgotten admin password is recovered with the command-line tool in
   DEPLOYMENT.md. The sign up limits above are the only brake on bots.
+* Email is optional. Confirmation and reset links last 24 hours and one hour, work once, and are stored
+  only as a hash. "Forgot password" answers the same whether or not the name or address exists. The app
+  sends at most 5 emails a minute and 200 a day, and 3 an hour and 10 a day to one address, whatever RATE_LIMITS says. It pauses 15
+  minutes after 3 failures in a row, and never retries an address the mail server has refused.
+* Live video goes straight between browsers, so the server cannot see it and cannot record it. It is off
+  until an administrator allows it and a room owner switches it on; cameras need a day-old account, a
+  member can be reported and removed, and switching it off ends every call. People in a call can see each
+  other's internet address, which the privacy notice says.
 * Members can download their data and delete their own account (it needs their password, and wrong
   guesses are throttled like the change-password screen). Deleted data stays in the nightly backups
   until they are rotated out (14 days).

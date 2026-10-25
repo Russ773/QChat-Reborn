@@ -6,12 +6,16 @@
  * chat server (ChatServer.botSay is the one way a bot speaks).
  */
 
+import { birthdayReport, randomFact, randomQuote } from './daily.js';
+
 export interface QBotContext {
   /** Who asked. */
   nick: string;
   /** The room it was asked in, and that room's topic. */
   room: string;
   topic: string | null;
+  /** The room's rules, if the owner posted any. */
+  rules?: string | null;
   /** Rooms with people in them, busiest first. */
   rooms: { name: string; online: number }[];
   /** Site wide numbers for !stats. */
@@ -24,11 +28,11 @@ export interface QBotContext {
 /** Every command QBot knows, for !help. */
 export const QBOT_COMMANDS = [
   'help', 'ping', 'time', 'roll', 'flip', '8ball', 'choose', 'joke', 'poll', 'vote', 'results', 'endpoll',
-  'remind', 'reminders', 'topic', 'stats', 'rooms', 'about',
+  'remind', 'reminders', 'topic', 'rules', 'fact', 'quote', 'birthdays', 'stats', 'rooms', 'about',
 ] as const;
 
 const HELP_ALL =
-  'Fun: !roll 2d6, !flip, !8ball <question>, !choose a, b, c, !joke. Useful: !poll, !remind 10m <text>, !time, !topic, !stats, !rooms, !about, !ping. Type !help <command> for details.';
+  'Fun: !roll 2d6, !flip, !8ball <question>, !choose a, b, c, !joke. Useful: !poll, !remind 10m <text>, !time, !fact, !quote, !birthdays, !topic, !rules, !stats, !rooms, !about, !ping. Type !help <command> for details.';
 
 const HELP_ONE: Record<string, string> = {
   help: '!help shows everything I can do. !help <command> explains one command.',
@@ -46,6 +50,10 @@ const HELP_ONE: Record<string, string> = {
   remind: '!remind 10m take the pizza out reminds you after 10 minutes. You can use s, m, h and d, for example 1h30m. Up to 7 days, 5 reminders at once.',
   reminders: '!reminders lists your reminders (only you see it). !reminders clear deletes them all.',
   topic: '!topic tells you what this room is about.',
+  fact: '!fact tells you something interesting.',
+  quote: '!quote shares a saying.',
+  birthdays: '!birthdays lists the birthdays coming up in the next two weeks, for members who chose to show theirs.',
+  rules: '!rules shows the rules the room owner has posted.',
   stats: '!stats shows how many members and rooms QChat has.',
   rooms: '!rooms lists the busiest rooms.',
   about: '!about tells you who I am.',
@@ -165,6 +173,14 @@ export function qbotReply(text: string, ctx: QBotContext): string | null {
     }
     case 'joke':
       return pick(JOKES, random);
+    case 'fact':
+      return randomFact(random);
+    case 'quote':
+      return randomQuote(random);
+    case 'birthdays':
+      return birthdayReport(ctx.now);
+    case 'rules':
+      return ctx.rules ? `Rules of ${label(ctx.room)}: ${ctx.rules}` : `${label(ctx.room)} has no rules posted.`;
     case 'topic':
       return ctx.topic ? `The topic of ${label(ctx.room)} is: ${ctx.topic}` : `${label(ctx.room)} has no topic set.`;
     case 'stats':

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
-import { mentions, type ChatLine, type Dm, type ServerMsg } from '@qchat/shared';
+import { emitSignal } from './video/bus.js';
+import { mentions, type ChatLine, type ClientMsg, type Dm, type Placement, type ServerMsg } from '@qchat/shared';
 import { ChatClient, type ChatStatus } from './chat/client.js';
 import { soundLabel } from './media/sounds.js';
 import {
@@ -72,6 +73,9 @@ function initialState(nick: string): AppState {
     account: null,
     status: 'idle',
     roomList: [],
+    wgGames: {},
+    wgViews: {},
+    wgTurns: [],
     rooms: {},
     order: [],
     dms: {},
@@ -177,6 +181,15 @@ function reducer(state: AppState, action: Action): AppState {
     case 'rooms':
       return { ...state, roomList: msg.rooms };
 
+    case 'wgList':
+      return { ...state, wgGames: { ...state.wgGames, [msg.room]: msg.games } };
+
+    case 'wg':
+      return { ...state, wgViews: { ...state.wgViews, [msg.id]: msg.game } };
+
+    case 'wgTurns':
+      return { ...state, wgTurns: msg.games };
+
     case 'joined': {
       const room: RoomState = {
         name: msg.room,
@@ -185,7 +198,12 @@ function reducer(state: AppState, action: Action): AppState {
         unread: 0,
         mentions: 0,
         media: state.rooms[msg.room]?.media ?? null,
+        queue: state.rooms[msg.room]?.queue ?? { items: [], skipVotes: 0, skipNeeded: 1 },
+        video: state.rooms[msg.room]?.video ?? { enabled: false, on: false, participants: [], ice: [] },
+        radio: state.rooms[msg.room]?.radio ?? { on: false, tracks: [] },
         topic: msg.topic,
+        rules: msg.rules,
+        pins: msg.pins,
         roles: msg.roles,
         away: msg.away,
         bots: msg.bots,
@@ -264,6 +282,21 @@ function reducer(state: AppState, action: Action): AppState {
 
     case 'topic':
       return patchRoom(state, msg.room, (r) => ({ ...r, topic: msg.topic }));
+
+    case 'rules':
+      return patchRoom(state, msg.room, (r) => ({ ...r, rules: msg.rules }));
+
+    case 'video':
+      return patchRoom(state, msg.room, (r) => ({ ...r, video: { enabled: msg.enabled, on: msg.on, participants: msg.participants, ice: msg.ice } }));
+
+    case 'queue':
+      return patchRoom(state, msg.room, (r) => ({ ...r, queue: { items: msg.items, skipVotes: msg.skipVotes, skipNeeded: msg.skipNeeded } }));
+
+    case 'radio':
+      return patchRoom(state, msg.room, (r) => ({ ...r, radio: { on: msg.on, tracks: msg.tracks } }));
+
+    case 'pins':
+      return patchRoom(state, msg.room, (r) => ({ ...r, pins: msg.pins }));
 
     case 'typing':
       return patchRoom(state, msg.room, (r) => ({ ...r, typing: { ...r.typing, [msg.nick]: Date.now() + 4000 } }));
@@ -387,6 +420,7 @@ export interface UseChat {
   leave: (room: string) => void;
   say: (room: string, text: string, extra?: { replyTo?: string; image?: string }) => void;
   react: (room: string, id: string, emoji: string) => void;
+  pin: (room: string, id: string, pin: boolean) => void;
   report: (room: string, id: string, reason?: string) => void;
   search: (room: string, q: string) => void;
   clearSearch: (room: string) => void;
@@ -398,6 +432,23 @@ export interface UseChat {
   setActive: (key: string) => void;
   playSound: (room: string, sound: string) => void;
   playYouTube: (room: string, ref: string, title?: string) => void;
+  /** Send any message to the server (used by live video). */
+  sendRaw: (msg: ClientMsg) => void;
+  wgList: (room: string) => void;
+  wgCreate: (room: string, maxPlayers: number) => void;
+  wgJoin: (id: string) => void;
+  wgLeave: (id: string) => void;
+  wgStart: (id: string) => void;
+  wgOpen: (id: string) => void;
+  wgClose: (id: string) => void;
+  wgPlay: (id: string, tiles: Placement[]) => void;
+  wgPass: (id: string) => void;
+  wgExchange: (id: string, letters: string[]) => void;
+  wgResign: (id: string) => void;
+  playMedia: (room: string, url: string) => void;
+  queueAdd: (room: string, url: string) => void;
+  queueRemove: (room: string, id: string) => void;
+  mediaSkip: (room: string) => void;
   mediaControl: (room: string, op: 'pause' | 'resume' | 'seek' | 'stop' | 'ended', pos?: number, ref?: string) => void;
   listRooms: () => void;
   dismissAnnouncement: () => void;
@@ -428,6 +479,7 @@ export function useChat(): UseChat {
       onMessage: (msg) => {
         if (msg.t === 'welcome') attempts.current = 0;
         if (msg.t === 'error') lastErrorAt.current = Date.now();
+        if (msg.t === 'rtc' || msg.t === 'videoPeers' || msg.t === 'videoEnded') emitSignal(msg);
         dispatch({ type: 'server', msg });
       },
       onStatus: (status) => dispatch({ type: 'status', status }),
@@ -496,6 +548,7 @@ export function useChat(): UseChat {
     (room: string, text: string, extra?: { replyTo?: string; image?: string }) => clientRef.current?.say(room, text, extra),
     [],
   );
+  const pin = useCallback((room: string, id: string, on: boolean) => clientRef.current?.pin(room, id, on), []);
   const react = useCallback((room: string, id: string, emoji: string) => clientRef.current?.react(room, id, emoji), []);
   const report = useCallback((room: string, id: string, reason?: string) => clientRef.current?.report(room, id, reason), []);
   const search = useCallback((room: string, q: string) => clientRef.current?.search(room, q), []);
@@ -513,6 +566,22 @@ export function useChat(): UseChat {
     (room: string, ref: string, title?: string) => clientRef.current?.playYouTube(room, ref, title),
     [],
   );
+  const sendRaw = useCallback((msg: ClientMsg) => clientRef.current?.send(msg), []);
+  const wgList = useCallback((room: string) => clientRef.current?.send({ t: 'wgList', room }), []);
+  const wgCreate = useCallback((room: string, maxPlayers: number) => clientRef.current?.send({ t: 'wgCreate', room, maxPlayers }), []);
+  const wgJoin = useCallback((id: string) => clientRef.current?.send({ t: 'wgJoin', id }), []);
+  const wgLeave = useCallback((id: string) => clientRef.current?.send({ t: 'wgLeave', id }), []);
+  const wgStart = useCallback((id: string) => clientRef.current?.send({ t: 'wgStart', id }), []);
+  const wgOpen = useCallback((id: string) => clientRef.current?.send({ t: 'wgOpen', id }), []);
+  const wgClose = useCallback((id: string) => clientRef.current?.send({ t: 'wgClose', id }), []);
+  const wgPlay = useCallback((id: string, tiles: Placement[]) => clientRef.current?.send({ t: 'wgPlay', id, tiles }), []);
+  const wgPass = useCallback((id: string) => clientRef.current?.send({ t: 'wgPass', id }), []);
+  const wgExchange = useCallback((id: string, letters: string[]) => clientRef.current?.send({ t: 'wgExchange', id, letters }), []);
+  const wgResign = useCallback((id: string) => clientRef.current?.send({ t: 'wgResign', id }), []);
+  const playMedia = useCallback((room: string, url: string) => clientRef.current?.playMedia(room, url), []);
+  const queueAdd = useCallback((room: string, url: string) => clientRef.current?.queueAdd(room, url), []);
+  const queueRemove = useCallback((room: string, id: string) => clientRef.current?.queueRemove(room, id), []);
+  const mediaSkip = useCallback((room: string) => clientRef.current?.mediaSkip(room), []);
   const mediaControl = useCallback(
     (room: string, op: 'pause' | 'resume' | 'seek' | 'stop' | 'ended', pos?: number, ref?: string) =>
       clientRef.current?.mediaControl(room, op, pos, ref),
@@ -556,6 +625,7 @@ export function useChat(): UseChat {
     leave,
     say,
     react,
+    pin,
     report,
     search,
     clearSearch,
@@ -567,6 +637,22 @@ export function useChat(): UseChat {
     setActive,
     playSound,
     playYouTube,
+    sendRaw,
+    wgList,
+    wgCreate,
+    wgJoin,
+    wgLeave,
+    wgStart,
+    wgOpen,
+    wgClose,
+    wgPlay,
+    wgPass,
+    wgExchange,
+    wgResign,
+    playMedia,
+    queueAdd,
+    queueRemove,
+    mediaSkip,
     mediaControl,
     listRooms,
     dismissAnnouncement,

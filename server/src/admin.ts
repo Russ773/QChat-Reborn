@@ -1,4 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { healthSnapshot } from './monitor.js';
+import { chart as chartStats } from './stats.js';
 import { MAX_BLOCKED_WORDS, MAX_LINK_MINUTES, validAccount, validContact, type AdminStats, type AdminUser, type AuditEntry } from '@qchat/shared';
 import {
   accountExists,
@@ -19,6 +21,7 @@ import { db } from './db.js';
 import { bearer, readBody, send } from './httpUtil.js';
 import { passwordProblem } from './security.js';
 import { getSettings, saveSettings } from './settings.js';
+import { allSounds, approveSound, deleteSound, deleteSoundsOf, getSound } from './sounds.js';
 import { removeUploadFiles } from './uploads.js';
 
 // --- Audit log ---------------------------------------------------------------
@@ -125,6 +128,17 @@ export async function handleAdmin(
   const seg = path.split('/').filter(Boolean).slice(2); // after /api/admin
   const params = new URLSearchParams(query);
 
+  if (seg[0] === 'charts' && method === 'GET') {
+    const days = [7, 30, 90].includes(Number(params.get('days'))) ? Number(params.get('days')) : 30;
+    send(res, 200, { days: chartStats(days) });
+    return true;
+  }
+
+  if (seg[0] === 'health' && method === 'GET') {
+    send(res, 200, { health: healthSnapshot(chat.stats().online) });
+    return true;
+  }
+
   if (seg[0] === 'stats' && method === 'GET') {
     send(res, 200, { stats: stats(chat) });
     return true;
@@ -153,6 +167,7 @@ export async function handleAdmin(
       const after = saveSettings(body);
       const changed = (Object.keys(after) as (keyof typeof after)[]).filter((k) => after[k] !== before[k]);
       if (changed.length) audit(me, 'settings', null, changed.map((k) => `${k}=${String(after[k]).slice(0, 60)}`).join(', '));
+      if (before.webcamsEnabled && !after.webcamsEnabled) chat.endAllVideo('Live video was switched off by an administrator.');
       // Turning maintenance on also sends everyone who is not an admin home.
       if (after.maintenance && !before.maintenance) {
         chat.kickNonAdmins('QChat is now down for maintenance. Please try again soon.');
@@ -187,6 +202,29 @@ export async function handleAdmin(
         if (r.id === id || r.messageId === report.messageId) resolveReport(r.id, me, resolution);
       }
       audit(me, 'resolve-report', report.author, `${resolution} (report #${id})`);
+      send(res, 200, { ok: true });
+      return true;
+    }
+  }
+
+  // --- Soundboard clips waiting for approval ---
+  if (seg[0] === 'sounds') {
+    if (seg.length === 1 && method === 'GET') {
+      send(res, 200, { sounds: allSounds() });
+      return true;
+    }
+    const sid = /^c(\d{1,9})$/.exec(seg[1] ?? '');
+    const sound = sid ? getSound(Number(sid[1])) : null;
+    if (!sound) return deny(res, 'No such sound.', 404);
+    if (method === 'POST' && seg[2] === 'approve') {
+      approveSound(Number(sid![1]));
+      audit(me, 'approve-sound', sound.by, sound.name);
+      send(res, 200, { ok: true });
+      return true;
+    }
+    if ((method === 'POST' && seg[2] === 'reject') || (method === 'DELETE' && seg.length === 2)) {
+      deleteSound(Number(sid![1]));
+      audit(me, sound.status === 'approved' ? 'delete-sound' : 'reject-sound', sound.by, sound.name);
       send(res, 200, { ok: true });
       return true;
     }
@@ -271,6 +309,8 @@ export async function handleAdmin(
       if (targetRole === 'admin') return deny(res, 'Remove their admin role before deleting the account.');
       chat.kickAccount(target, 'Your account has been deleted.');
       removeAvatars(target);
+      chat.forgetWordGames(target);
+      deleteSoundsOf(target.toLowerCase());
       removeUploadFiles(purgeAccount(target));
       deleteAccount(target);
       audit(me, 'delete-member', target);

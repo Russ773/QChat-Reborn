@@ -39,6 +39,7 @@ try {
   // tar reads "C:" as a machine name, so give it paths without a drive letter.
   const listing = run('tar', ['tzf', 'qchat-release.tar.gz']).stdout ?? '';
   check('it holds the built server and client, and no leftovers from old versions', /server\/dist\/index\.js/.test(listing) && /client\/dist\/index\.html/.test(listing) && !/ircd|gateway/.test(listing));
+  check('it holds the word list for the word game', /server/words/enable1.txt.gz/.test(listing));
   check('it is small', listing.split('\n').length < 400);
 
   copyFileSync(tarball, join(rel, 'package.tar.gz')); // a plain file name, so tar never sees a drive letter

@@ -74,6 +74,20 @@ export function ensureTriviaBot(): void {
   db.prepare("INSERT INTO settings (key, value) VALUES ('triviaBotSeeded', 'true')").run();
 }
 
+/** WeatherBot answers !weather and !forecast. Added once, like TriviaBot; afterwards an administrator runs it. */
+export const WEATHER_BOT = 'WeatherBot';
+export function ensureWeatherBot(): void {
+  if (db.prepare("SELECT 1 FROM settings WHERE key = 'weatherBotSeeded'").get()) return;
+  db.prepare(
+    `INSERT OR IGNORE INTO bots (nameLower, name, description, emoji, builtin, enabled, allRooms, createdBy, createdAt)
+     VALUES ('weatherbot', 'WeatherBot', 'Tells you the weather. Try !weather London or !forecast Paris. Weather data by Open-Meteo.com.', '⛅', 0, 1, 0, 'system', ?)`,
+  ).run(Date.now());
+  for (const room of ['#lobby', '#general']) {
+    db.prepare("INSERT OR IGNORE INTO bot_rooms (botLower, room) VALUES ('weatherbot', ?)").run(room);
+  }
+  db.prepare("INSERT INTO settings (key, value) VALUES ('weatherBotSeeded', 'true')").run();
+}
+
 /** True the first time it is called for a member (and never again): they have not been welcomed yet. */
 export function claimGreeting(account: string): boolean {
   const r = db.prepare('INSERT OR IGNORE INTO bot_greeted (accountLower, ts) VALUES (?, ?)').run(account.toLowerCase(), Date.now());

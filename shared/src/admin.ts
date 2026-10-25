@@ -16,6 +16,12 @@ export interface SiteSettings {
   contactEmail: string;
   /** Words and phrases that cannot be posted (one per line). Administrators are exempt. */
   blockedWords: string;
+  /** Mute members who send the same message again and again. */
+  autoMuteSpam: boolean;
+  /** QBot posts a fact or quote of the day, and wishes members a happy birthday, in the lobby. */
+  dailyPost: boolean;
+  /** Room owners may switch on live video (camera and microphone) in their rooms. */
+  webcamsEnabled: boolean;
   /** Members cannot post links until their account is this many minutes old (0 for no rule). */
   newMemberLinkMinutes: number;
 }
@@ -28,6 +34,9 @@ export const DEFAULT_SETTINGS: SiteSettings = {
   qbotCommands: true,
   contactEmail: '',
   blockedWords: '',
+  autoMuteSpam: true,
+  dailyPost: true,
+  webcamsEnabled: false,
   newMemberLinkMinutes: 10,
 };
 
@@ -121,4 +130,33 @@ export interface AuditEntry {
   action: string;
   target: string | null;
   detail: string | null;
+}
+
+/** One day of activity, for the admin charts. */
+export interface DayStat {
+  /** The date, as YYYY-MM-DD (UTC). */
+  day: string;
+  messages: number;
+  dms: number;
+  signups: number;
+  /** Members who connected that day. */
+  active: number;
+  /** The most people online at once. */
+  peakOnline: number;
+}
+
+/** How the server is doing, for the admin Health page. */
+export interface HealthInfo {
+  startedAt: number;
+  uptimeSec: number;
+  version: string;
+  node: string;
+  memoryMb: number;
+  dbMb: number;
+  picturesMb: number;
+  diskFreeMb: number | null;
+  diskTotalMb: number | null;
+  online: number;
+  errors: { id: number; ts: number; kind: string; message: string }[];
+  errorsLastHour: number;
 }

@@ -21,6 +21,9 @@ import { BotModal } from './components/BotModal.js';
 import { ConfirmModal } from './components/ConfirmModal.js';
 import { ContextMenu, type MenuItem } from './components/ContextMenu.js';
 import { Conversation } from './components/Conversation.js';
+import { RoomNotes } from './components/RoomNotes.js';
+import { WordGameModal } from './components/WordGameModal.js';
+import { VideoPanel } from './components/VideoPanel.js';
 import { Gate } from './components/Gate.js';
 import { LogoMark, Wordmark } from './components/Logo.js';
 import { MediaPanel } from './components/MediaPanel.js';
@@ -36,6 +39,8 @@ import { RoomTabs } from './components/RoomTabs.js';
 import { SearchPanel } from './components/SearchPanel.js';
 import { SoundPicker } from './components/SoundPicker.js';
 import { playSound as playSoundFx } from './media/sounds.js';
+import { loadCustomSounds, playCustom } from './media/customSounds.js';
+import { applyLook } from './theme.js';
 import { showDesktopNotification } from './notify.js';
 import { useAvatars } from './useAvatars.js';
 import { useChat } from './useChat.js';
@@ -71,6 +76,9 @@ export default function App() {
   const [showPrefs, setShowPrefs] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
+  const [showGames, setShowGames] = useState(false);
+  const [showVideo, setShowVideo] = useState(false);
+  const [openGame, setOpenGame] = useState<string | null>(null);
   const [showRooms, setShowRooms] = useState(false);
   const [showNewDm, setShowNewDm] = useState(false);
   const [showAddFriend, setShowAddFriend] = useState(false);
@@ -121,7 +129,14 @@ export default function App() {
   // Play incoming sounds (your own always play; others respect autoplay).
   useEffect(() => {
     const ls = state.lastSound;
-    if (ls && (autoplay || ls.from === state.nick)) playSoundFx(ls.sound);
+    if (ls && (autoplay || ls.from === state.nick)) {
+      if (/^c\d+$/.test(ls.sound)) {
+        // A member's own clip. If it was approved after we loaded the list, fetch the list again.
+        if (!playCustom(ls.sound) && token) void loadCustomSounds(token).then(() => playCustom(ls.sound));
+      } else {
+        playSoundFx(ls.sound);
+      }
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.lastSound?.id]);
 
@@ -172,6 +187,7 @@ export default function App() {
         setMyProfile(res.profile);
         setRole(res.role);
         setAutoplay(res.prefs?.autoplay ?? true);
+        if (res.prefs) applyLook(res.prefs.theme, res.prefs.skin);
         chat.connect(res.account, t);
         setBooting(false);
       })
@@ -195,7 +211,12 @@ export default function App() {
     setRole(res.role);
     setMyProfile(res.profile);
     chat.connect(res.account, res.token);
-    me(res.token).then((r) => setAutoplay(r.prefs?.autoplay ?? true)).catch(() => {});
+    me(res.token)
+      .then((r) => {
+        setAutoplay(r.prefs?.autoplay ?? true);
+        if (r.prefs) applyLook(r.prefs.theme, r.prefs.skin);
+      })
+      .catch(() => {});
   };
   const doLogout = () => {
     if (token) logout(token);
@@ -400,6 +421,7 @@ export default function App() {
 
   return (
     <div className="app">
+      <a className="skip-link" href="#chat-main">Skip to the chat</a>
       {disconnected && (
         <div className="disconnect-banner" role="alert">
           <span>⚠ Lost connection. Trying to reconnect…</span>
@@ -416,7 +438,7 @@ export default function App() {
       )}
 
       <div className={`drawer-backdrop ${drawer ? 'show' : ''}`} onClick={() => setDrawer(null)} />
-      <aside className={`sidebar ${drawer === 'menu' ? 'open' : ''}`}>
+      <aside className={`sidebar ${drawer === 'menu' ? 'open' : ''}`} aria-label="Your rooms, messages and friends">
         <div className="brand">
           <LogoMark size={30} />
           <Wordmark />
@@ -452,7 +474,7 @@ export default function App() {
               +
             </button>
           </div>
-          <nav className="buffers">
+          <nav className="buffers" aria-label="Private messages">
             {dmList.length === 0 && <p className="buffers-empty">No private messages yet.</p>}
             {dmList.map((t) => {
               const key = dmKey(t.with);
@@ -494,7 +516,7 @@ export default function App() {
               ))}
             </div>
           )}
-          <nav className="buffers">
+          <nav className="buffers" aria-label="Friends">
             {state.friends.length === 0 && state.requests.incoming.length === 0 && (
               <p className="buffers-empty">No friends yet. Add someone with +.</p>
             )}
@@ -509,13 +531,13 @@ export default function App() {
         </div>
       </aside>
 
-      <main className="main">
+      <main className="main" id="chat-main" tabIndex={-1}>
         {room ? (
           <>
             <header className="chan-head">
               <button className="head-btn narrow-only" aria-label="Menu" title="Menu: your rooms, messages and friends" onClick={() => setDrawer((d) => (d === 'menu' ? null : 'menu'))}>☰</button>
               <div className="chan-title">
-                <span className="chan-name">{roomLabel(room.name)}</span>
+                <h1 className="chan-name">{roomLabel(room.name)}</h1>
                 <span className="chan-meta">{room.members.length} online</span>
                 {room.topic && (
                   <span className="chan-topic" title={`Topic set by ${room.topic.by}`}>
@@ -524,6 +546,28 @@ export default function App() {
                 )}
               </div>
               <div className="chan-actions">
+                {room.video.enabled && room.video.on && (
+                  <button
+                    className={`head-btn ${showVideo ? 'active' : ''}`}
+                    title="Live video"
+                    aria-label={`Live video, ${room.video.participants.length} in the call`}
+                    aria-pressed={showVideo}
+                    onClick={() => setShowVideo((v) => !v)}
+                  >
+                    🎥{room.video.participants.length > 0 && <span className="turn-badge live">{room.video.participants.length}</span>}
+                  </button>
+                )}
+                <button
+                  className={`head-btn ${showGames ? 'active' : ''}`}
+                  title="Word game"
+                  aria-label={`Word game${state.wgTurns.length ? `, ${state.wgTurns.length} waiting for your move` : ''}`}
+                  onClick={() => {
+                    chat.wgList(room.name);
+                    setShowGames(true);
+                  }}
+                >
+                  🔤{state.wgTurns.length > 0 && <span className="turn-badge">{state.wgTurns.length}</span>}
+                </button>
                 <button className="head-btn narrow-only" aria-label="Members" title="Who is here" onClick={() => setDrawer((d) => (d === 'members' ? null : 'members'))}>👥</button>
                 {!POPOUT && (
                   <button className="head-btn" title="Open this chat in its own small window" aria-label="Pop out chat" onClick={openPopout}>⧉</button>
@@ -559,9 +603,27 @@ export default function App() {
               key={room.name}
               roomMedia={room.media}
               autoplay={autoplay}
-              onPlayRoom={(ref) => chat.playYouTube(room.name, ref)}
+              queue={room.queue}
+              me={state.nick}
+              canModerate={myRank >= 2}
+              onPlayRoom={(url) => chat.playMedia(room.name, url)}
+              onQueue={(url) => chat.queueAdd(room.name, url)}
+              onSkip={() => chat.mediaSkip(room.name)}
+              onRemove={(id) => chat.queueRemove(room.name, id)}
               onControlRoom={(op, pos) => chat.mediaControl(room.name, op, pos, room.media?.ref)}
             />
+            {room.video.enabled && room.video.on && (
+              <VideoPanel
+                key={room.name}
+                room={room.name}
+                me={state.nick}
+                open={showVideo}
+                participants={room.video.participants}
+                ice={room.video.ice}
+                canModerate={myRank >= 2}
+                send={chat.sendRaw}
+              />
+            )}
             {searching && (
               <SearchPanel
                 room={room.name}
@@ -587,14 +649,27 @@ export default function App() {
                 commandRank={myRank}
                 onSend={(text, extra) => chat.say(room.name, text, extra)}
                 onTyping={() => chat.typing(room.name)}
-                tools={<SoundPicker onPlay={(id) => chat.playSound(room.name, id)} />}
+                tools={<SoundPicker token={token} onPlay={(id) => chat.playSound(room.name, id)} />}
                 canModerate={myRank >= 2}
                 onEdit={(id, text) => chat.editMessage(room.name, id, text)}
                 onDelete={(id) => chat.deleteMessage(room.name, id)}
                 onProfile={openMember}
                 bots={room.bots}
+                mentionable={[...room.members, ...room.bots.map((b) => b.name)]}
+                onEnqueue={(url) => chat.queueAdd(room.name, url)}
+                notes={
+                  <RoomNotes
+                    pins={room.pins}
+                    rules={room.rules}
+                    canUnpin={myRank >= 2}
+                    onUnpin={(id) => chat.pin(room.name, id, false)}
+                    onProfile={openMember}
+                  />
+                }
                 onClear={() => chat.clearRoom(room.name)}
                 rich={{
+                  onPin: myRank >= 2 ? (id, on) => chat.pin(room.name, id, on) : undefined,
+                  pinnedIds: room.pins.map((p) => p.id),
                   onReact: (id, emoji) => chat.react(room.name, id, emoji),
                   onReport: (id) => {
                     const msg = room.events.find((e) => e.id === id);
@@ -606,7 +681,7 @@ export default function App() {
                   },
                 }}
               />
-              <aside className={`right-rail ${drawer === 'members' ? 'open' : ''}`}>
+              <aside className={`right-rail ${drawer === 'members' ? 'open' : ''}`} aria-label="Who is here">
                 <MembersPanel
                   members={room.members}
                   roles={room.roles}
@@ -627,7 +702,7 @@ export default function App() {
               <div className="chan-title">
                 <button className="dm-head" onClick={() => openMember(dm.with)} title="View profile">
                   <Avatar name={dm.with} src={avatarFor(dm.with)} size={34} />
-                  <span className="chan-name">{dm.with}</span>
+                  <h1 className="chan-name">{dm.with}</h1>
                 </button>
                 <span className="chan-meta">private chat</span>
               </div>
@@ -663,7 +738,7 @@ export default function App() {
             <header className="chan-head">
               <button className="head-btn narrow-only" aria-label="Menu" title="Menu: your rooms, messages and friends" onClick={() => setDrawer((d) => (d === 'menu' ? null : 'menu'))}>☰</button>
               <div className="chan-title">
-                <span className="chan-name">Welcome</span>
+                <h1 className="chan-name">Welcome</h1>
               </div>
             </header>
             <div className="empty-state">
@@ -738,6 +813,9 @@ export default function App() {
           room={room.name}
           info={state.roomAdmin && state.roomAdmin.room === room.name ? state.roomAdmin : null}
           topic={room.topic?.text ?? ''}
+          rules={room.rules?.text ?? ''}
+          radio={room.radio}
+          video={{ siteOn: room.video.enabled, on: room.video.on }}
           canManageMods={myRank >= 3}
           onCommand={(cmd) => {
             chat.say(room.name, cmd);
@@ -761,6 +839,34 @@ export default function App() {
       {botCard && <BotModal bot={botCard} onClose={() => setBotCard(null)} />}
       {toast && <div className="toast" role="status">{toast}</div>}
       {showPassword && token && <PasswordModal token={token} onClose={() => setShowPassword(false)} />}
+      {showGames && room && (
+        <WordGameModal
+          room={room.name}
+          me={state.nick}
+          games={state.wgGames[room.name] ?? []}
+          openId={openGame}
+          view={openGame ? state.wgViews[openGame] : undefined}
+          onOpen={(id) => {
+            if (openGame) chat.wgClose(openGame);
+            setOpenGame(id);
+            if (id) chat.wgOpen(id);
+            else chat.wgList(room.name);
+          }}
+          onCreate={(n) => chat.wgCreate(room.name, n)}
+          onJoin={chat.wgJoin}
+          onLeave={chat.wgLeave}
+          onStart={chat.wgStart}
+          onPlay={chat.wgPlay}
+          onPass={chat.wgPass}
+          onExchange={chat.wgExchange}
+          onResign={chat.wgResign}
+          onClose={() => {
+            if (openGame) chat.wgClose(openGame);
+            setOpenGame(null);
+            setShowGames(false);
+          }}
+        />
+      )}
       {showDelete && token && (
         <DeleteAccountModal
           token={token}

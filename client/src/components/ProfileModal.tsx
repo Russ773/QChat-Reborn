@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { PROFILE_FIELDS, type Profile, type ProfileField } from '@qchat/shared';
+import { BIRTHDAY_DAYS, BIRTHDAY_MONTHS, PROFILE_FIELDS, formatBirthday, type Profile, type ProfileField } from '@qchat/shared';
 import { Avatar } from './Avatar.js';
 
 interface Props {
@@ -25,7 +25,7 @@ interface Props {
 }
 
 const FACTS: (keyof Profile)[] = [
-  'age', 'gender', 'location', 'timezone', 'relationship', 'lookingFor', 'occupation', 'interests',
+  'age', 'birthday', 'gender', 'location', 'timezone', 'relationship', 'lookingFor', 'occupation', 'interests',
 ];
 const LABELS = Object.fromEntries(PROFILE_FIELDS.map((f) => [f.key, f.label]));
 
@@ -163,7 +163,7 @@ export function ProfileModal({
                     {FACTS.filter((k) => profile[k]).map((k) => (
                       <div className="fact" key={k}>
                         <span className="fact-label">{LABELS[k]}</span>
-                        <span className="fact-value">{String(profile[k])}</span>
+                        <span className="fact-value">{k === 'birthday' ? formatBirthday(String(profile[k])) : String(profile[k])}</span>
                       </div>
                     ))}
                   </div>
@@ -207,6 +207,28 @@ export function ProfileModal({
 }
 
 function Field({ field, value, onChange }: { field: ProfileField; value: string; onChange: (v: string) => void }) {
+  if (field.type === 'birthday') {
+    const [m, d] = value.split('-').map(Number);
+    const set = (month: number, day: number) =>
+      onChange(month && day ? `${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}` : '');
+    return (
+      <span className="birthday-pick">
+        <select aria-label="Birthday day" value={d || ''} onChange={(e) => set(m || 1, Number(e.target.value))}>
+          <option value="">Day</option>
+          {Array.from({ length: BIRTHDAY_DAYS[(m || 1) - 1] }, (_, i) => (
+            <option key={i + 1} value={i + 1}>{i + 1}</option>
+          ))}
+        </select>
+        <select aria-label="Birthday month" value={m || ''} onChange={(e) => set(Number(e.target.value), Math.min(d || 1, BIRTHDAY_DAYS[Number(e.target.value) - 1] ?? 31))}>
+          <option value="">Month</option>
+          {BIRTHDAY_MONTHS.map((n, i) => (
+            <option key={n} value={i + 1}>{n}</option>
+          ))}
+        </select>
+        {value && <button type="button" className="mini" onClick={() => onChange('')}>Clear</button>}
+      </span>
+    );
+  }
   if (field.type === 'select') {
     return (
       <select value={value} onChange={(e) => onChange(e.target.value)}>

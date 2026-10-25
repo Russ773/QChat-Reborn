@@ -3,6 +3,21 @@ import { validAccount } from '@qchat/shared';
 import { handleAdmin } from './admin.js';
 import { accountForToken, changePassword, createSession, deleteAccount, getRole, login, logout, register, verifyAccountPassword } from './accounts.js';
 import { eraseAccountData, exportAccount } from './account-data.js';
+import { confirmVerification, emailOf, finishPasswordReset, removeEmail, startPasswordReset, startVerification, validEmail } from './emails.js';
+import { mailEnabled } from './mail.js';
+import {
+  MAX_SOUNDS_PER_MEMBER,
+  MAX_SOUND_BYTES,
+  addSound,
+  approvedSounds,
+  deleteSound,
+  deleteSoundsOf,
+  getSound,
+  sniffAudio,
+  soundsOf,
+  validSoundEmoji,
+  validSoundName,
+} from './sounds.js';
 import { AVATAR_TYPES, MAX_AVATAR_BYTES, removeAvatars, saveAvatar } from './avatars.js';
 import type { ChatServer } from './chat/server.js';
 import * as store from './chat/store.js';
@@ -13,6 +28,9 @@ import { getSettings } from './settings.js';
 import {
   apiByIp,
   clientIp,
+  emailChangeByAccount,
+  resetByAccount,
+  resetByIp,
   forLog,
   loginFailsByAccount,
   loginFailsByIp,
@@ -47,7 +65,7 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, chat:
   // What the login screen needs to know before anyone is logged in.
   if (path === '/api/site' && method === 'GET') {
     const s = getSettings();
-    send(res, 200, { registrationOpen: s.registrationOpen, maintenance: s.maintenance, contactEmail: s.contactEmail });
+    send(res, 200, { registrationOpen: s.registrationOpen, maintenance: s.maintenance, contactEmail: s.contactEmail, mailEnabled: mailEnabled() });
     return true;
   }
 
@@ -55,12 +73,19 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, chat:
     const wait = Math.max(signupsByIp.wait(ip), signupsGlobal.wait('site'));
     if (wait > 0) return tooMany(res, wait);
     const b = await readBody(req);
-    const r = register(String(b.account ?? ''), String(b.email ?? ''), String(b.password ?? ''), b.agree === true);
+    const email = String(b.email ?? '').trim();
+    if (email && !validEmail(email)) {
+      send(res, 422, { error: 'That does not look like an email address. You can leave it empty.' });
+      return true;
+    }
+    const r = register(String(b.account ?? ''), email, String(b.password ?? ''), b.agree === true);
     if (!r.ok) {
       send(res, r.status ?? 422, { error: r.error });
     } else {
       signupsByIp.hit(ip);
       signupsGlobal.hit('site');
+      // If they gave an address, send the link that confirms it (the sign up does not wait for it).
+      if (email && mailEnabled()) void startVerification(r.account!, email);
       send(res, 200, {
         token: createSession(r.account!),
         account: r.account,
@@ -128,6 +153,68 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, chat:
     return true;
   }
 
+  // Add, change or remove the email on your account. Changing it needs your password; the new address
+  // only counts once its link has been opened.
+  if (path === '/api/email' && method === 'POST') {
+    const acct = accountForToken(bearer(req));
+    if (!acct) {
+      send(res, 401, { error: 'Not logged in.' });
+      return true;
+    }
+    const key = acct.toLowerCase();
+    const wait = Math.max(passwordChangeFails.wait(key), emailChangeByAccount.wait(key), resetByIp.wait(ip));
+    if (wait > 0) return tooMany(res, wait);
+    const b = await readBody(req);
+    if (!verifyAccountPassword(acct, String(b.password ?? ''))) {
+      passwordChangeFails.hit(key);
+      send(res, 403, { error: 'That password is not right.' });
+      return true;
+    }
+    const email = String(b.email ?? '').trim();
+    if (!email) {
+      removeEmail(acct);
+      send(res, 200, { ok: true, removed: true });
+      return true;
+    }
+    emailChangeByAccount.hit(key);
+    resetByIp.hit(ip); // emails sent because of a visitor count against their address, whatever they asked for
+    const r = await startVerification(acct, email);
+    send(res, r.ok ? 200 : 422, r.ok ? { ok: true, pending: email } : { error: r.error });
+    return true;
+  }
+
+  if (path === '/api/email/confirm' && method === 'POST') {
+    const b = await readBody(req);
+    const r = await confirmVerification(String(b.token ?? '').slice(0, 100));
+    send(res, r.ok ? 200 : 400, r.ok ? { ok: true, email: r.email } : { error: r.error });
+    return true;
+  }
+
+  // "I forgot my password." The answer never says whether the name or address exists.
+  if (path === '/api/password/forgot' && method === 'POST') {
+    if (!mailEnabled()) {
+      send(res, 503, { error: 'Password reset by email is not set up on this site. Ask an administrator to reset it for you.' });
+      return true;
+    }
+    const wait = resetByIp.hit(ip);
+    if (wait > 0) return tooMany(res, wait);
+    const b = await readBody(req);
+    const who = String(b.identifier ?? '').trim().toLowerCase().slice(0, 130);
+    if (who && resetByAccount.hit(who) === 0) void startPasswordReset(who);
+    send(res, 200, { ok: true });
+    return true;
+  }
+
+  if (path === '/api/password/reset' && method === 'POST') {
+    const wait = resetByIp.wait(ip);
+    if (wait > 0) return tooMany(res, wait);
+    const b = await readBody(req);
+    const r = await finishPasswordReset(String(b.token ?? '').slice(0, 100), String(b.password ?? ''));
+    if (!r.ok) resetByIp.hit(ip);
+    send(res, r.ok ? 200 : 400, r.ok ? { ok: true, account: r.account } : { error: r.error });
+    return true;
+  }
+
   // Everything QChat holds about you, as a file you can keep.
   if (path === '/api/account/export' && method === 'GET') {
     const acct = accountForToken(bearer(req));
@@ -164,8 +251,10 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, chat:
       send(res, 403, { error: 'That password is not right.' });
       return true;
     }
+    chat.forgetWordGames(acct);
     chat.kickAccount(acct, 'Your account has been deleted.');
     removeAvatars(acct);
+    deleteSoundsOf(acct.toLowerCase());
     removeUploadFiles(eraseAccountData(acct));
     deleteAccount(acct);
     console.log(`[qchat] ${forLog(acct)} deleted their account`);
@@ -186,7 +275,8 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, chat:
     } else if (getSettings().maintenance && getRole(acct) !== 'admin') {
       send(res, 503, { error: 'QChat is down for maintenance. Please try again soon.' });
     } else {
-      send(res, 200, { account: acct, role: getRole(acct), profile: getProfile(acct), prefs: getPrefs(acct) });
+      const mail = emailOf(acct.toLowerCase());
+      send(res, 200, { account: acct, role: getRole(acct), profile: getProfile(acct), prefs: getPrefs(acct), email: mail.email, emailVerified: mail.verified });
     }
     return true;
   }
@@ -263,6 +353,72 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, chat:
     return true;
   }
 
+  // The soundboard's extra sounds: everyone's approved ones, plus your own (waiting or not).
+  if (path === '/api/sounds' && method === 'GET') {
+    const acct = accountForToken(bearer(req));
+    if (!acct) {
+      send(res, 401, { error: 'Not logged in.' });
+      return true;
+    }
+    send(res, 200, { sounds: approvedSounds().map(publicSound), mine: soundsOf(acct.toLowerCase()).map(publicSound) });
+    return true;
+  }
+
+  if (path === '/api/sounds' && method === 'POST') {
+    const acct = accountForToken(bearer(req));
+    if (!acct) {
+      send(res, 401, { error: 'Not logged in.' });
+      return true;
+    }
+    const params = new URLSearchParams(req.url?.split('?')[1] ?? '');
+    const name = (params.get('name') ?? '').trim();
+    const emoji = (params.get('emoji') ?? '').trim() || '🔊';
+    if (!validSoundName(name)) {
+      send(res, 422, { error: 'Give the sound a short name (up to 20 letters, numbers and spaces).' });
+      return true;
+    }
+    if (!validSoundEmoji(emoji)) {
+      send(res, 422, { error: 'Pick a single emoji for the sound.' });
+      return true;
+    }
+    if (soundsOf(acct.toLowerCase()).length >= MAX_SOUNDS_PER_MEMBER) {
+      send(res, 429, { error: `You can have ${MAX_SOUNDS_PER_MEMBER} sounds. Delete one to add another.` });
+      return true;
+    }
+    const buf = await readRawBody(req, MAX_SOUND_BYTES);
+    if (!buf) {
+      send(res, 413, { error: `That clip is too big. Keep it short (under ${Math.round(MAX_SOUND_BYTES / 1024)} KB, about 8 seconds).` });
+      return true;
+    }
+    const ext = sniffAudio(buf);
+    if (!ext) {
+      send(res, 415, { error: 'Only MP3, OGG, WAV, M4A and WebM audio can be used.' });
+      return true;
+    }
+    const sound = addSound(acct, name, emoji, buf, ext);
+    chat.notifyAdmins(`${acct} added a soundboard clip called "${name}" for approval.`);
+    console.log(`[qchat] ${forLog(acct)} submitted sound ${sound.id}`);
+    send(res, 200, { sound: publicSound(sound) });
+    return true;
+  }
+
+  const soundDel = /^\/api\/sounds\/c(\d{1,9})$/.exec(path);
+  if (soundDel && method === 'DELETE') {
+    const acct = accountForToken(bearer(req));
+    if (!acct) {
+      send(res, 401, { error: 'Not logged in.' });
+      return true;
+    }
+    const s = getSound(Number(soundDel[1]));
+    if (!s || s.by.toLowerCase() !== acct.toLowerCase()) {
+      send(res, 404, { error: 'No such sound of yours.' });
+      return true;
+    }
+    deleteSound(Number(soundDel[1]));
+    send(res, 200, { ok: true });
+    return true;
+  }
+
   if (path === '/api/profile' && method === 'PUT') {
     const acct = accountForToken(bearer(req));
     if (!acct) {
@@ -276,4 +432,9 @@ export async function handleApi(req: IncomingMessage, res: ServerResponse, chat:
 
   send(res, 404, { error: 'Not found.' });
   return true;
+}
+
+/** What a member (or the soundboard) sees of a clip: no file size, no timestamps. */
+function publicSound(s: { id: string; name: string; emoji: string; by: string; status: string; url: string }) {
+  return { id: s.id, name: s.name, emoji: s.emoji, by: s.by, status: s.status, url: s.url };
 }

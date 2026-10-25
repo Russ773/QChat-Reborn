@@ -5,6 +5,9 @@
  * discriminator on every message.
  */
 
+import type { MediaProvider, QueueItem, RadioTrack } from './media.js';
+import type { Placement, WordGameSummary, WordGameView } from './wordgame.js';
+
 export interface ChatUser {
   /** Stable per-connection id. */
   id: string;
@@ -75,6 +78,39 @@ export interface RoomTopic {
   at: number;
 }
 
+/** The rules a room's owner has posted. */
+export interface RoomRules {
+  text: string;
+  by: string;
+  at: number;
+}
+
+/** A message a moderator pinned to the top of a room. */
+export interface PinInfo {
+  id: string;
+  from: string;
+  text: string;
+  ts: number;
+  image?: string;
+  pinnedBy: string;
+  pinnedAt: number;
+}
+
+export interface VideoParticipant {
+  nick: string;
+  /** Sending a camera (as opposed to only watching). */
+  cam: boolean;
+}
+
+export interface IceServer {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
+}
+
+export const MAX_VIDEO_CAMS = 4;
+export const MAX_VIDEO_PEOPLE = 12;
+
 /** One saved private message. */
 export interface Dm {
   id: string;
@@ -100,21 +136,16 @@ export interface DmThread {
  * / 1000; while paused, position = pausedPos.
  */
 export interface MediaState {
-  kind: 'youtube';
-  ref: string; // youtube video id
+  kind: MediaProvider;
+  /** What is playing: a video id, a SoundCloud path, a Twitch channel (see parseMediaUrl). */
+  ref: string;
+  /** True when the room's radio chose it. */
+  radio?: true;
   title?: string;
   by: string;
   paused: boolean;
   startedAt: number; // server epoch ms for position 0
   pausedPos: number; // seconds, used while paused
-}
-
-/** Extract an 11-char YouTube id from a url or raw id, else null. */
-export function youTubeId(input: string): string | null {
-  const s = input.trim();
-  if (/^[A-Za-z0-9_-]{11}$/.test(s)) return s;
-  const m = s.match(/(?:v=|\/embed\/|youtu\.be\/|\/v\/|\/shorts\/)([A-Za-z0-9_-]{11})/);
-  return m ? m[1] : null;
 }
 
 /** Messages the browser sends to the server. */
@@ -127,6 +158,8 @@ export type ClientMsg =
   /** `replyTo` is a message id; `image` is the name of a file you uploaded. */
   | { t: 'say'; room: string; text: string; replyTo?: string; image?: string }
   | { t: 'react'; room: string; id: string; emoji: string }
+  /** Moderators pin a message to the top of the room (or unpin it). */
+  | { t: 'pin'; room: string; id: string; pin: boolean }
   | { t: 'report'; room: string; id: string; reason?: string }
   | { t: 'search'; room: string; q: string }
   | { t: 'roomAdmin'; room: string }
@@ -145,10 +178,37 @@ export type ClientMsg =
   | { t: 'dmTyping'; to: string }
   | { t: 'listDms' }
   | { t: 'playYouTube'; room: string; ref: string; title?: string }
+  /** Play a link now, for the room: YouTube, Vimeo, SoundCloud or Twitch. */
+  | { t: 'playMedia'; room: string; url: string }
+  /** Add a link to the room's queue (or play it, if nothing is playing). */
+  | { t: 'queueAdd'; room: string; url: string }
+  /** Take something out of the queue. The id "all" clears it (moderators). */
+  | { t: 'queueRemove'; room: string; id: string }
+  /** Vote to skip what is playing (or start the next thing, if nothing is). */
+  | { t: 'mediaSkip'; room: string }
   /** `ended` says the video finished; `ref` names the video, so a late report about an earlier one is ignored. */
   | { t: 'mediaControl'; room: string; op: 'pause' | 'resume' | 'seek' | 'stop' | 'ended'; pos?: number; ref?: string }
   | { t: 'playSound'; room: string; sound: string }
   | { t: 'listRooms' }
+  /** QWords, the word game. The games in a room: */
+  /** Join the room's live video, sending your camera (cam) or only watching. */
+  | { t: 'videoJoin'; room: string; cam: boolean }
+  | { t: 'videoLeave'; room: string }
+  /** Set-up messages passed between two people in the same video session (the video itself goes directly between them). */
+  | { t: 'rtc'; room: string; to: string; kind: 'offer' | 'answer' | 'ice'; data: unknown }
+  | { t: 'videoReport'; room: string; nick: string }
+  | { t: 'wgList'; room: string }
+  | { t: 'wgCreate'; room: string; maxPlayers: number }
+  | { t: 'wgJoin'; id: string }
+  | { t: 'wgLeave'; id: string }
+  | { t: 'wgStart'; id: string }
+  /** Start watching a game, and get it. */
+  | { t: 'wgOpen'; id: string }
+  | { t: 'wgClose'; id: string }
+  | { t: 'wgPlay'; id: string; tiles: Placement[] }
+  | { t: 'wgPass'; id: string }
+  | { t: 'wgExchange'; id: string; letters: string[] }
+  | { t: 'wgResign'; id: string }
   | { t: 'ping' };
 
 /** Messages the server sends to the browser. */
@@ -162,6 +222,8 @@ export type ServerMsg =
       /** True when older messages are saved and can be loaded. */
       more: boolean;
       topic: RoomTopic | null;
+      rules: RoomRules | null;
+      pins: PinInfo[];
       roles: Record<string, RoomRole>;
       away: string[];
       bots: BotInfo[];
@@ -171,6 +233,8 @@ export type ServerMsg =
   | { t: 'history'; room: string; lines: ChatLine[]; more: boolean }
   | { t: 'presence'; room: string; members: string[]; roles: Record<string, RoomRole>; away: string[]; bots: BotInfo[] }
   | { t: 'topic'; room: string; topic: RoomTopic | null }
+  | { t: 'rules'; room: string; rules: RoomRules | null }
+  | { t: 'pins'; room: string; pins: PinInfo[] }
   | { t: 'typing'; room: string; nick: string }
   | { t: 'edited'; room: string; id: string; text: string; edited: number }
   | { t: 'deleted'; room: string; id: string }
@@ -197,9 +261,22 @@ export type ServerMsg =
   | { t: 'system'; room?: string; text: string }
   | { t: 'rooms'; rooms: RoomInfo[] }
   | { t: 'media'; room: string; state: MediaState | null }
+  | { t: 'queue'; room: string; items: QueueItem[]; skipVotes: number; skipNeeded: number }
+  | { t: 'radio'; room: string; on: boolean; tracks: RadioTrack[] }
   | { t: 'sound'; room: string; sound: string; from: string }
   | { t: 'announce'; text: string; by: string; room?: string }
   | { t: 'error'; text: string }
+  /** The state of a room's video. `enabled` is the site-wide switch, `on` is the room's. */
+  | { t: 'video'; room: string; enabled: boolean; on: boolean; participants: VideoParticipant[]; ice: IceServer[] }
+  /** Sent to someone who just joined the video: who to connect to. */
+  | { t: 'videoPeers'; room: string; peers: string[] }
+  | { t: 'videoEnded'; room: string; reason: string }
+  | { t: 'rtc'; room: string; from: string; kind: 'offer' | 'answer' | 'ice'; data: unknown }
+  | { t: 'wgList'; room: string; games: WordGameSummary[] }
+  /** A game, as you see it. `game` is null when it has been removed. */
+  | { t: 'wg'; id: string; game: WordGameView | null }
+  /** The games where it is your turn. */
+  | { t: 'wgTurns'; games: { id: string; room: string }[] }
   | { t: 'pong' };
 
 export function encodeMsg(msg: ClientMsg | ServerMsg): string {
@@ -230,6 +307,8 @@ export interface RoomInfo {
 export const MAX_ROOM_NAME = 30;
 export const MAX_MESSAGE = 2000;
 export const MAX_TOPIC = 200;
+export const MAX_RULES = 1000;
+export const MAX_PINS = 5;
 export const HISTORY_PAGE = 50;
 
 /** Normalise a room name: lowercase, leading '#', no spaces. */

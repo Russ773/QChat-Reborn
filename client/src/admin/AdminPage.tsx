@@ -2,18 +2,22 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AdminBot, AdminReport, AdminRoom, AdminStats, AdminUser, AuditEntry, SiteSettings } from '@qchat/shared';
 import { Avatar } from '../components/Avatar.js';
 import { LogoMark, Wordmark } from '../components/Logo.js';
-import { adminApi } from './adminApi.js';
+import { adminApi, type AdminSound } from './adminApi.js';
+import { ActivityCharts, HealthPanel } from './Charts.js';
+import { useLoad } from './useLoad.js';
 
-type Tab = 'dashboard' | 'members' | 'rooms' | 'bots' | 'reports' | 'announce' | 'settings' | 'audit';
+type Tab = 'dashboard' | 'members' | 'rooms' | 'bots' | 'sounds' | 'reports' | 'announce' | 'settings' | 'health' | 'audit';
 
 const TABS: { id: Tab; label: string; icon: string }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: '📊' },
   { id: 'members', label: 'Members', icon: '👥' },
   { id: 'rooms', label: 'Rooms', icon: '💬' },
   { id: 'bots', label: 'Bots', icon: '🤖' },
+  { id: 'sounds', label: 'Sounds', icon: '🔊' },
   { id: 'reports', label: 'Reports', icon: '🚩' },
   { id: 'announce', label: 'Announcements', icon: '📢' },
   { id: 'settings', label: 'Site settings', icon: '⚙️' },
+  { id: 'health', label: 'Server health', icon: '🩺' },
   { id: 'audit', label: 'Audit log', icon: '🧾' },
 ];
 
@@ -46,6 +50,10 @@ const ACTION_LABEL: Record<string, string> = {
   'stop-video': 'Stopped a video',
   'kick-from-room': 'Removed someone from a room',
   'resolve-report': 'Dealt with a report',
+  automute: 'Muted automatically for repeating a message',
+  'approve-sound': 'Approved a soundboard clip',
+  'reject-sound': 'Rejected a soundboard clip',
+  'delete-sound': 'Deleted a soundboard clip',
   'create-bot': 'Created a bot',
   'edit-bot': 'Edited a bot',
   'delete-bot': 'Deleted a bot',
@@ -55,32 +63,6 @@ const ACTION_LABEL: Record<string, string> = {
   'set-topic': 'Changed a room topic',
   'make-server-room': 'Made a room server owned',
 };
-
-/** Load data once, and again whenever reload() is called. */
-function useLoad<T>(fn: () => Promise<T>, deps: unknown[]) {
-  const [data, setData] = useState<T | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    let dead = false;
-    fn()
-      .then((d) => {
-        if (!dead) {
-          setData(d);
-          setError(null);
-        }
-      })
-      .catch((e: Error) => {
-        if (!dead) setError(e.message);
-      });
-    return () => {
-      dead = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, tick]);
-  const reload = useCallback(() => setTick((t) => t + 1), []);
-  return { data, error, reload };
-}
 
 // --- Confirm / input dialog ---------------------------------------------------
 
@@ -198,6 +180,8 @@ function Dashboard({ token }: TabProps) {
           </div>
         ))}
       </div>
+
+      <ActivityCharts token={token} />
 
       <div className="panel">
         <div className="panel-title">Recent admin activity</div>
@@ -745,6 +729,25 @@ function Settings({ token, notify, ask }: TabProps) {
           onChange={(v) => setForm({ ...form, maintenance: v })}
         />
         <Switch
+          label="Mute members who repeat themselves"
+          help="Sending the same message three times within a minute mutes them in that room for 10 minutes (an hour, then a day, if they keep going). Room moderators and admins are exempt."
+          checked={form.autoMuteSpam}
+          onChange={(v) => setForm({ ...form, autoMuteSpam: v })}
+        />
+        <Switch
+          label="Allow live video in rooms"
+          help="Room owners can switch on live video (camera and microphone) in their rooms. It goes straight between members, so QChat cannot see or record it, which also means you cannot see it to check it. Members must have had their account for a day to use a camera, and members can report what they see. Switching this off ends every call at once."
+          checked={form.webcamsEnabled}
+          danger
+          onChange={(v) => setForm({ ...form, webcamsEnabled: v })}
+        />
+        <Switch
+          label="Daily fact or quote, and birthdays"
+          help="Each morning (UK time) QBot posts a fact or a quote in the lobby, and wishes a happy birthday to members who chose to show their birthday on their profile."
+          checked={form.dailyPost}
+          onChange={(v) => setForm({ ...form, dailyPost: v })}
+        />
+        <Switch
           label="QBot welcomes new members"
           help="QBot says hello the first time someone joins a room, and points them to !help."
           checked={form.qbotWelcome}
@@ -1149,6 +1152,64 @@ function Reports({ token, notify, ask }: TabProps) {
   );
 }
 
+// --- Soundboard clips -----------------------------------------------------------------------
+
+function Sounds({ token, notify, ask }: TabProps) {
+  const list = useLoad<AdminSound[]>(() => adminApi.sounds(token), [token]);
+  const waiting = list.data?.filter((s) => s.status === 'pending') ?? [];
+  const live = list.data?.filter((s) => s.status === 'approved') ?? [];
+
+  const approve = (s: AdminSound) =>
+    adminApi.approveSound(token, s.id).then(() => {
+      notify(`"${s.name}" is now on the soundboard.`);
+      list.reload();
+    }).catch((e: Error) => notify(e.message));
+  const remove = (s: AdminSound, verb: string) =>
+    ask({
+      title: `${verb} "${s.name}"?`,
+      message: `The clip from ${s.by} is deleted for good.`,
+      confirmLabel: verb,
+      danger: true,
+      run: async () => {
+        await adminApi.rejectSound(token, s.id);
+        notify(`"${s.name}" was removed.`);
+        list.reload();
+      },
+    });
+
+  const row = (s: AdminSound, pending: boolean) => (
+    <div className="panel sound-row" key={s.id}>
+      <div className="sound-info">
+        <b>{s.emoji} {s.name}</b>
+        <span className="muted small">from {s.by}, {Math.round(s.size / 1024)} KB, {fmtTime(s.ts)}</span>
+      </div>
+      <audio controls preload="none" src={s.url} aria-label={`Preview ${s.name}`} />
+      <div className="report-actions">
+        {pending && <button className="mini" onClick={() => void approve(s)}>Approve</button>}
+        <button className="mini danger" onClick={() => remove(s, pending ? 'Reject' : 'Delete')}>{pending ? 'Reject' : 'Delete'}</button>
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      <PageHead title="Soundboard" sub="Clips members have uploaded. Listen before you approve: approved clips play for whole rooms." />
+      {list.error && <p className="pm-error">{list.error}</p>}
+      {!list.data && <p className="muted">Loading…</p>}
+      {list.data && (
+        <>
+          <h2 className="chart-heading">Waiting for approval ({waiting.length})</h2>
+          {waiting.length === 0 && <div className="panel"><p className="muted">Nothing is waiting.</p></div>}
+          {waiting.map((s) => row(s, true))}
+          <h2 className="chart-heading" style={{ marginTop: 18 }}>On the soundboard ({live.length})</h2>
+          {live.length === 0 && <div className="panel"><p className="muted">No member sounds yet.</p></div>}
+          {live.map((s) => row(s, false))}
+        </>
+      )}
+    </>
+  );
+}
+
 // --- Audit log ------------------------------------------------------------------------------
 
 function Audit({ token }: TabProps) {
@@ -1225,9 +1286,16 @@ export function AdminPage({ token, me, onBack }: { token: string; me: string; on
         {tab === 'members' && <Members {...props} />}
         {tab === 'rooms' && <Rooms {...props} />}
         {tab === 'bots' && <Bots {...props} />}
+        {tab === 'sounds' && <Sounds {...props} />}
         {tab === 'reports' && <Reports {...props} />}
         {tab === 'announce' && <Announce {...props} />}
         {tab === 'settings' && <Settings {...props} />}
+        {tab === 'health' && (
+          <>
+            <PageHead title="Server health" sub="Is everything running well, and is anything about to run out?" />
+            <HealthPanel token={token} />
+          </>
+        )}
         {tab === 'audit' && <Audit {...props} />}
       </main>
 

@@ -22,6 +22,14 @@ safe to run while your own server is running on another port.
 | features | change password, server rooms, topics, polls, reminders, TriviaBot |
 | presence | "left chat" notices and reloads |
 | media | finished videos |
+| playlist | links for YouTube, Vimeo, SoundCloud and Twitch, the queue, skipping, the room radio, member sounds |
+| community | birthdays, the daily post, QBot facts and quotes, WeatherBot, themes and skins |
+| wordgame | QWords: scoring rules and whole games |
+| video | live video: switches, who may join, limits, moderation |
+| email | confirming an address, forgotten passwords, sending limits |
+| emailsmtp | the real SMTP conversation against a mail server of its own |
+| roomtools | pinned messages, room rules, automatic mute for repeating |
+| ops | health check, admin health page and charts, surviving bad messages |
 | moderation | blocked words, the new-member link rule, admin settings for them |
 | account | terms and privacy pages, data export, deleting your account, password reset tool, disk housekeeping |
 | security | headers, passwords, rate limits, sessions, sockets |

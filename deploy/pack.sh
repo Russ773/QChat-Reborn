@@ -22,7 +22,7 @@ tar czf "$OUT" \
   --exclude='*.tar.gz' \
   package.json package-lock.json \
   shared/package.json shared/dist \
-  server/package.json server/dist \
+  server/package.json server/dist server/words \
   client/package.json client/dist \
   SECURITY.md \
   deploy

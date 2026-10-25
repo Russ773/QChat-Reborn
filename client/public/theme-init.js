@@ -1,0 +1,1 @@
+(function(){try{var t=localStorage.getItem('qchat_theme')||'dark',s=localStorage.getItem('qchat_skin')||'default';var r=t==='auto'?(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):t;var h=document.documentElement;h.dataset.theme=r;h.dataset.skin=s;}catch(e){}})();

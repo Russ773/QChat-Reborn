@@ -97,6 +97,10 @@ export const loginFailsByAccount = new Limiter(40, HOUR);
 export const passwordChangeFails = new Limiter(5, 15 * MIN);
 /** New accounts: per address, and across the whole site. */
 export const signupsByIp = new Limiter(5, HOUR);
+/** Emails about a forgotten password, per address and per member. */
+export const resetByIp = new Limiter(5, HOUR);
+export const resetByAccount = new Limiter(3, HOUR);
+export const emailChangeByAccount = new Limiter(4, HOUR);
 export const signupsGlobal = new Limiter(200, HOUR);
 /** Every API call, per address. */
 export const apiByIp = new Limiter(600, MIN);
@@ -135,13 +139,13 @@ export const SESSION_MAX_MS = Math.max(SESSION_IDLE_MS, 90 * 24 * HOUR);
  */
 const CSP = [
   "default-src 'self'",
-  "script-src 'self' https://www.youtube.com",
+  "script-src 'self' https://www.youtube.com https://player.vimeo.com https://w.soundcloud.com",
   "style-src 'self' 'unsafe-inline'",
   "font-src 'self'",
   "img-src 'self' data: blob: https://i.ytimg.com",
   "media-src 'self' blob: data:",
   "connect-src 'self'",
-  "frame-src https://www.youtube.com https://www.youtube-nocookie.com",
+  "frame-src https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com https://w.soundcloud.com https://player.twitch.tv",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
@@ -155,7 +159,7 @@ export function securityHeaders(req: IncomingMessage): Record<string, string> {
     'x-frame-options': 'DENY',
     // The YouTube player needs to know which site embeds it, so send the origin cross-site.
     'referrer-policy': 'strict-origin-when-cross-origin',
-    'permissions-policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+    'permissions-policy': 'camera=(self), microphone=(self), geolocation=(), payment=(), usb=()',
     'cross-origin-opener-policy': 'same-origin',
     'cross-origin-resource-policy': 'same-origin',
   };

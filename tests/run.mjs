@@ -23,6 +23,7 @@ const SUITE_DIR = join(ROOT, 'tests', 'suites');
 /** Steps: test(file, ...args) | restart | fresh(env) | sql(statements) | capture(file, name) | $name in args */
 const test = (file, ...args) => ({ do: 'test', file, args });
 const restart = { do: 'restart' };
+const restartWith = (env) => ({ do: 'restart', env });
 const fresh = (env = {}) => ({ do: 'fresh', env });
 const sql = (statements) => ({ do: 'sql', statements });
 const capture = (file, name) => ({ do: 'capture', file, name });
@@ -76,6 +77,64 @@ const GROUPS = {
     about: 'finished videos clear for the room',
     env: RELAXED,
     steps: [test('media.mjs')],
+  },
+  email: {
+    about: 'confirming an email address, forgotten passwords, the limits on sending',
+    env: { ...RELAXED, QCHAT_PUBLIC_URL: 'https://example.test', MAIL_PER_MINUTE: '100' },
+    steps: [
+      test('email.mjs', 'off'),
+      fresh({ MAIL_TRANSPORT: 'file' }),
+      test('email.mjs', 'a'),
+      sql("UPDATE email_tokens SET expiresAt = 1;"),
+      test('email.mjs', 'b'),
+    ],
+  },
+  emailsmtp: {
+    about: 'the real SMTP conversation, against a mail server of its own',
+    env: { ...RELAXED, QCHAT_PUBLIC_URL: 'https://example.test', MAIL_TRANSPORT: 'smtp', SMTP_HOST: '127.0.0.1', SMTP_PORT: '8225', MAIL_PER_MINUTE: '100', MAIL_PER_ADDRESS_HOUR: '50', MAIL_PER_ADDRESS_DAY: '50', MAIL_PAUSE_SECONDS: '3', MAIL_REPLY_TO: 'contact@qchat.co.uk' },
+    steps: [test('email-smtp.mjs')],
+  },
+  video: {
+    about: 'live video: the switches, who may join, who connects to whom, moderation, limits',
+    env: RELAXED,
+    steps: [test('video.mjs', 'a'), restartWith({ QCHAT_CAM_MIN_AGE_HOURS: '0' }), test('video.mjs', 'b')],
+  },
+  wordgame: {
+    about: 'QWords: the scoring rules, and whole games played over the connection',
+    env: RELAXED,
+    steps: [test('wordgame.mjs', 'a'), restart, test('wordgame.mjs', 'b')],
+  },
+  community: {
+    about: 'birthdays, the daily post, QBot facts and quotes, WeatherBot, themes and skins',
+    env: RELAXED,
+    steps: [
+      test('community.mjs', 'a'),
+      // The server is told it is 10:30 in the UK on 15 June, then the same day again, then 6am the next
+      // day, then a later morning with the switch off.
+      restartWith({ QCHAT_DAILY: 'on', QCHAT_FAKE_NOW: '2026-06-15T09:30:00Z' }),
+      test('community.mjs', 'b'),
+      restartWith({ QCHAT_DAILY: 'on', QCHAT_FAKE_NOW: '2026-06-15T15:00:00Z' }),
+      test('community.mjs', 'c'),
+      restartWith({ QCHAT_DAILY: 'on', QCHAT_FAKE_NOW: '2026-06-16T05:00:00Z' }),
+      test('community.mjs', 'd'),
+      restartWith({ QCHAT_DAILY: 'on', QCHAT_FAKE_NOW: '2026-06-16T11:00:00Z' }),
+      test('community.mjs', 'e'),
+    ],
+  },
+  playlist: {
+    about: 'link parsing, queue and skipping, room radio, Vimeo/SoundCloud/Twitch, member sounds',
+    env: RELAXED,
+    steps: [test('playlist.mjs', 'a'), restart, test('playlist.mjs', 'b')],
+  },
+  ops: {
+    about: 'health check, admin health page and charts, surviving bad messages',
+    env: RELAXED,
+    steps: [test('ops.mjs')],
+  },
+  roomtools: {
+    about: 'pinned messages, room rules, automatic mute for repeating a message',
+    env: RELAXED,
+    steps: [test('roomtools.mjs', 'a'), restart, test('roomtools.mjs', 'b')],
   },
   moderation: {
     about: 'blocked words, the new-member link rule, and the admin settings for them',
@@ -152,9 +211,15 @@ class TestServer {
     this.dir = mkdtempSync(join(tmpdir(), 'qchat-test-'));
   }
   async start(extra = {}) {
+    // Something else already answering on the test port would make the results meaningless.
+    try {
+      if ((await fetch(`http://127.0.0.1:${PORT}/healthz`)).ok) throw new Error('busy');
+    } catch (e) {
+      if (e instanceof Error && e.message === 'busy') throw new Error(`Port ${PORT} is already in use (another server or test run?). Stop it and try again.`);
+    }
     this.child = spawn(process.execPath, ['server/dist/index.js'], {
       cwd: ROOT,
-      env: { ...process.env, ADMIN_ACCOUNTS: 'Russ', ...this.env, ...extra, QCHAT_DATA_DIR: this.dir, HTTP_PORT: String(PORT) },
+      env: { ...process.env, ADMIN_ACCOUNTS: 'Russ', QCHAT_OEMBED: 'off', QCHAT_DAILY: 'off', QCHAT_WEATHER: 'fake', ...this.env, ...extra, QCHAT_DATA_DIR: this.dir, HTTP_PORT: String(PORT) },
       stdio: 'ignore',
     });
     for (let i = 0; i < 60; i++) {
@@ -226,7 +291,7 @@ for (const name of names) {
   try {
     await server.start();
     for (const step of group.steps) {
-      if (step.do === 'restart') await server.restart();
+      if (step.do === 'restart') await server.restart(step.env);
       else if (step.do === 'fresh') await server.fresh(step.env);
       else if (step.do === 'sql') {
         await server.stop();

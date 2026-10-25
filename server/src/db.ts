@@ -278,5 +278,88 @@ addColumn('accounts', 'suspended', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('accounts', 'suspendedReason', 'TEXT');
 addColumn('accounts', 'lastLogin', 'INTEGER');
 addColumn('accounts', 'termsAcceptedAt', 'INTEGER');
+addColumn('accounts', 'emailVerifiedAt', 'INTEGER');
+db.exec(`CREATE TABLE IF NOT EXISTS mail_bad (address TEXT PRIMARY KEY, ts INTEGER NOT NULL);`);
+db.exec(`
+  CREATE TABLE IF NOT EXISTS email_tokens (
+    tokenHash    TEXT PRIMARY KEY,
+    accountLower TEXT NOT NULL,
+    kind         TEXT NOT NULL,
+    email        TEXT NOT NULL,
+    createdAt    INTEGER NOT NULL,
+    expiresAt    INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_email_tokens_account ON email_tokens (accountLower, kind);
+`);
 addColumn('messages', 'replyTo', 'TEXT');
+db.exec(`
+  CREATE TABLE IF NOT EXISTS error_log (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts      INTEGER NOT NULL,
+    kind    TEXT NOT NULL,
+    message TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS stats_daily (
+    day        TEXT PRIMARY KEY,
+    messages   INTEGER NOT NULL DEFAULT 0,
+    dms        INTEGER NOT NULL DEFAULT 0,
+    peakOnline INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE TABLE IF NOT EXISTS activity (
+    day          TEXT NOT NULL,
+    accountLower TEXT NOT NULL,
+    PRIMARY KEY (day, accountLower)
+  );
+`);
+db.exec(`
+  CREATE TABLE IF NOT EXISTS custom_sounds (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner      TEXT NOT NULL,
+    ownerLower TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    emoji      TEXT NOT NULL,
+    file       TEXT NOT NULL,
+    size       INTEGER NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'pending',
+    ts         INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_sounds_owner ON custom_sounds (ownerLower);
+`);
+db.exec(`
+  CREATE TABLE IF NOT EXISTS word_games (
+    id        TEXT PRIMARY KEY,
+    room      TEXT NOT NULL,
+    status    TEXT NOT NULL,
+    creator   TEXT NOT NULL,
+    updatedAt INTEGER NOT NULL,
+    state     TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_wg_room ON word_games (room, updatedAt);
+`);
+addColumn('profiles', 'birthday', 'TEXT');
+addColumn('rooms', 'videoOn', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('rooms', 'radioOn', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('rooms', 'radioPos', 'INTEGER NOT NULL DEFAULT 0');
+db.exec(`
+  CREATE TABLE IF NOT EXISTS radio_tracks (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    room     TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    ref      TEXT NOT NULL,
+    title    TEXT NOT NULL DEFAULT ''
+  );
+  CREATE INDEX IF NOT EXISTS idx_radio_room ON radio_tracks (room, id);
+`);
+addColumn('rooms', 'rules', 'TEXT');
+addColumn('rooms', 'rulesBy', 'TEXT');
+addColumn('rooms', 'rulesAt', 'INTEGER');
+db.exec(`
+  CREATE TABLE IF NOT EXISTS pins (
+    room      TEXT NOT NULL,
+    messageId TEXT NOT NULL,
+    pinnedBy  TEXT NOT NULL,
+    ts        INTEGER NOT NULL,
+    PRIMARY KEY (room, messageId)
+  );
+`);
 addColumn('messages', 'image', 'TEXT');

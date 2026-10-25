@@ -1,5 +1,6 @@
 import { db } from './db.js';
 import { purgeAccount } from './chat/store.js';
+import { exportGames } from './wordgame.js';
 
 /** Everything QChat holds about one member, for "Download my data". Never includes the password hash. */
 export function exportAccount(account: string): Record<string, unknown> {
@@ -20,7 +21,7 @@ export function exportAccount(account: string): Record<string, unknown> {
   return {
     about: 'This is the personal information QChat holds about you, taken at the time you asked for it.',
     exportedAt: new Date().toISOString(),
-    account: one('SELECT account, email, role, createdAt, lastLogin, termsAcceptedAt FROM accounts WHERE accountLower = ?', l),
+    account: one('SELECT account, email, emailVerifiedAt, role, createdAt, lastLogin, termsAcceptedAt FROM accounts WHERE accountLower = ?', l),
     profile: profile ?? null,
     friends: all('SELECT friendLower AS name FROM friends WHERE accountLower = ?', l).map((r) => r.name),
     friendRequestsSent: all('SELECT toName AS name, ts FROM friend_requests WHERE fromLower = ?', l),
@@ -37,6 +38,8 @@ export function exportAccount(account: string): Record<string, unknown> {
     ),
     reactions: all('SELECT emoji, messageId FROM reactions WHERE accountLower = ?', l),
     reportsYouMade: all('SELECT ts, room, text AS reportedText, reason, status FROM reports WHERE reporterLower = ?', l),
+    wordGames: exportGames(l),
+    soundboardClips: all('SELECT name, emoji, status, size, ts FROM custom_sounds WHERE ownerLower = ?', l),
     pictures: all('SELECT name, ts, size FROM uploads WHERE ownerLower = ?', l),
     triviaScores: one('SELECT points, correct, wins, played FROM trivia_scores WHERE accountLower = ?', l) ?? null,
     reminders: all('SELECT room, dueAt, text FROM reminders WHERE accountLower = ?', l),

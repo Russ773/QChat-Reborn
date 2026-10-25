@@ -4,23 +4,39 @@ import {
   COMMANDS,
   HISTORY_PAGE,
   MAX_MESSAGE,
+  MAX_GAMES_PER_MEMBER,
+  MAX_PINS,
+  MAX_VIDEO_CAMS,
+  MAX_VIDEO_PEOPLE,
+  MAX_RULES,
   MAX_TOPIC,
   REACTION_EMOJI,
   decodeMsg,
   encodeMsg,
   normalizeRoom,
   validRoom,
-  youTubeId,
+  MAX_QUEUE,
+  MAX_QUEUE_PER_MEMBER,
+  MAX_RADIO_TRACKS,
+  isLive,
+  mediaLink,
+  parseMediaUrl,
   type AdminRoom,
   type ChatLine,
   type ClientMsg,
   type FriendInfo,
+  type IceServer,
+  type MediaProvider,
   type MediaState,
+  type QueueItem,
   type RoomInfo,
   type RoomRole,
   type ServerMsg,
 } from '@qchat/shared';
-import { QBOT, botInRoom, botsInRoom, claimGreeting, ensureBuiltInBots, ensureTriviaBot, getBot } from '../bots.js';
+import { QBOT, WEATHER_BOT, botInRoom, botsInRoom, claimGreeting, ensureBuiltInBots, ensureTriviaBot, ensureWeatherBot, getBot } from '../bots.js';
+import { takeDailyPost } from '../daily.js';
+import { WEATHER_HELP, weatherReply } from '../weather.js';
+import { getProfile as getProfileOf } from '../profiles.js';
 import { PollBoard } from '../qbot-polls.js';
 import { qbotReply, welcomeText } from '../qbot.js';
 import {
@@ -52,6 +68,13 @@ import {
   topScores,
 } from '../trivia.js';
 import { screenText } from '../filter.js';
+import { cleanTitle, lookupTitle } from '../oembed.js';
+import { isApprovedSound } from '../sounds.js';
+import * as wg from '../wordgame.js';
+import { recordError } from '../monitor.js';
+import * as stats from '../stats.js';
+import { SpamWatch } from '../spam.js';
+import { getSettings } from '../settings.js';
 import { WS_LOGIN_TIMEOUT_MS } from '../security.js';
 import { UPLOAD_NAME_RE, removeUploadFiles } from '../uploads.js';
 import * as store from './store.js';
@@ -146,6 +169,7 @@ export class ChatServer {
     store.seedDefaultTopics(DEFAULT_TOPICS);
     ensureBuiltInBots();
     ensureTriviaBot();
+    ensureWeatherBot();
 
     // Drop dead connections.
     setInterval(() => {
@@ -169,6 +193,9 @@ export class ChatServer {
       for (const n of gone) this.log(`room expired (unused for 30 days): ${n}`);
       store.trimMessages(KEEP_MESSAGES);
       store.trimDms(KEEP_DMS);
+      this.spam.sweep();
+      this.dailyPost();
+      this.wgSweep();
       const unused = store.takeUnusedUploads(Date.now() - UNUSED_PICTURE_GRACE);
       if (unused.length > 0) {
         removeUploadFiles(unused);
@@ -198,8 +225,19 @@ export class ChatServer {
 
     ws.on('message', (data) => {
       conn.alive = true;
-      const msg = decodeMsg<ClientMsg>(typeof data === 'string' ? data : data.toString());
-      if (msg) this.handle(conn, msg);
+      const raw = typeof data === 'string' ? data : data.toString();
+      // Only a video set-up message may be more than 16 KB; anything else that big is not from a real client.
+      if (raw.length > 16 * 1024 && !raw.startsWith('{"t":"rtc"')) return void conn.ws.close(1009, 'Message too big');
+      const msg = decodeMsg<ClientMsg>(raw);
+      if (!msg) return;
+      // One bad message (or a bug it uncovers) must never take the whole server down.
+      try {
+        this.handle(conn, msg);
+      } catch (err) {
+        recordError('message', err);
+        this.log(`error handling a "${String(msg.t).slice(0, 20)}" message: ${String(err)}`);
+        this.send(conn, { t: 'error', text: 'Something went wrong with that. Please try again.' });
+      }
     });
     ws.on('pong', () => (conn.alive = true));
     ws.on('close', () => {
@@ -227,6 +265,8 @@ export class ChatServer {
         return this.onLeave(conn, msg.room, 'left');
       case 'say':
         return this.onSay(conn, msg.room, String(msg.text ?? ''), msg.replyTo, msg.image);
+      case 'pin':
+        return this.onPin(conn, msg.room, String(msg.id ?? ''), msg.pin !== false);
       case 'react':
         return this.onReact(conn, msg.room, String(msg.id ?? ''), String(msg.emoji ?? ''));
       case 'report':
@@ -264,13 +304,51 @@ export class ChatServer {
       case 'listDms':
         return this.sendThreads(conn.account);
       case 'playYouTube':
-        return this.onPlayYouTube(conn, msg.room, msg.ref, msg.title);
+        return this.onPlayMedia(conn, msg.room, String(msg.ref ?? ''), msg.title);
+      case 'playMedia':
+        return this.onPlayMedia(conn, msg.room, String(msg.url ?? ''));
+      case 'queueAdd':
+        return this.onQueueAdd(conn, msg.room, String(msg.url ?? ''));
+      case 'queueRemove':
+        return this.onQueueRemove(conn, msg.room, String(msg.id ?? ''));
+      case 'mediaSkip':
+        return this.onMediaSkip(conn, msg.room);
       case 'mediaControl':
         return this.onMediaControl(conn, msg.room, msg.op, msg.pos, msg.ref);
       case 'playSound':
         return this.onPlaySound(conn, msg.room, msg.sound);
       case 'listRooms':
         return this.send(conn, { t: 'rooms', rooms: this.roomInfos() });
+      case 'videoJoin':
+        return this.onVideoJoin(conn, msg.room, msg.cam === true);
+      case 'videoLeave':
+        return void this.leaveVideo(conn.id, normalizeRoom(msg.room), 'You left the video.');
+      case 'rtc':
+        return this.onRtc(conn, msg.room, String(msg.to ?? ''), msg.kind, msg.data);
+      case 'videoReport':
+        return this.onVideoReport(conn, msg.room, String(msg.nick ?? ''));
+      case 'wgList':
+        return this.onWgList(conn, msg.room);
+      case 'wgCreate':
+        return this.onWgCreate(conn, msg.room, Number(msg.maxPlayers));
+      case 'wgJoin':
+        return this.onWgJoin(conn, String(msg.id ?? ''));
+      case 'wgLeave':
+        return this.onWgLeave(conn, String(msg.id ?? ''));
+      case 'wgStart':
+        return this.onWgStart(conn, String(msg.id ?? ''));
+      case 'wgOpen':
+        return this.onWgOpen(conn, String(msg.id ?? ''));
+      case 'wgClose':
+        return void this.wgWatchers.get(String(msg.id ?? ''))?.delete(conn.id);
+      case 'wgPlay':
+        return this.onWgMove(conn, String(msg.id ?? ''), (g, me) => wg.playTiles(g, me, Array.isArray(msg.tiles) ? msg.tiles.slice(0, 7) : []));
+      case 'wgPass':
+        return this.onWgMove(conn, String(msg.id ?? ''), (g, me) => wg.passTurn(g, me));
+      case 'wgExchange':
+        return this.onWgMove(conn, String(msg.id ?? ''), (g, me) => wg.exchangeTiles(g, me, Array.isArray(msg.letters) ? msg.letters.slice(0, 7).map(String) : []));
+      case 'wgResign':
+        return this.onWgMove(conn, String(msg.id ?? ''), (g, me) => wg.resign(g, me));
     }
   }
 
@@ -286,11 +364,14 @@ export class ChatServer {
     }
     conn.account = account;
     conn.nick = account;
+    stats.noteActive(account.toLowerCase());
+    stats.notePeak(this.onlineAccounts().size);
     this.send(conn, { t: 'welcome', you: { id: conn.id, nick: conn.nick, account } });
     this.sendThreads(account, conn);
     this.send(conn, { t: 'friends', ...this.friendList(account) });
     if (this.connsOf(account).length === 1) this.pushToFriends(account); // just came online
     this.deliverReminders(account); // anything that came due while they were away
+    this.sendWgTurns(account.toLowerCase());
   }
 
   // --- Rooms ------------------------------------------------------------------
@@ -356,6 +437,8 @@ export class ChatServer {
       history: this.unblocked(page.lines, account),
       more: page.more,
       topic: store.topicOf(store.getRoom(room)),
+      rules: store.rulesOf(store.getRoom(room)),
+      pins: store.pinsOf(room),
       roles: this.roleMap(room),
       away: this.awayNicks(room),
       bots: botsInRoom(room),
@@ -363,6 +446,14 @@ export class ChatServer {
     this.broadcastPresence(room);
     const media = this.media.get(room);
     if (media) this.send(conn, { t: 'media', room, state: media });
+    this.send(conn, this.queueState(room));
+    this.send(conn, this.radioState(room));
+    this.send(conn, this.videoState(room));
+    if (joinedNow) {
+      // A room that has been empty starts fresh: a stopped radio may play again.
+      if (this.memberNicks(room).length <= 1) this.radioHold.delete(room);
+      this.maybeStartRadio(room);
+    }
     const welcome = this.policy.welcome();
     if (welcome && joinedNow) this.send(conn, { t: 'system', room, text: welcome });
     // QBot's first job: welcome a member the first time they ever join a room (never on a quiet rejoin).
@@ -383,6 +474,7 @@ export class ChatServer {
     if (!members || !members.has(conn.id)) return;
     members.delete(conn.id);
     conn.rooms.delete(room);
+    this.leaveVideo(conn.id, room);
     this.send(conn, { t: 'left', room });
     // Still in this room in another window? Then they have not left it.
     if (!this.connsOf(conn.account ?? '').some((c) => c.id !== conn.id && c.rooms.has(room))) {
@@ -394,6 +486,8 @@ export class ChatServer {
   private disconnect(conn: Conn): void {
     if (!this.conns.has(conn.id)) return;
     this.conns.delete(conn.id);
+    for (const set of this.wgWatchers.values()) set.delete(conn.id);
+    for (const room of [...this.videoRooms.keys()]) this.leaveVideo(conn.id, room);
     for (const room of conn.rooms) {
       this.live.get(room)?.delete(conn.id);
       this.broadcastPresence(room);
@@ -464,11 +558,13 @@ export class ChatServer {
     const clean = sanitize(text);
     if (!clean && !extra.image) return;
     if (this.screened(conn, clean)) return;
+    if (this.spamMuted(conn, room, clean)) return;
     const line = store.addMessage(room, conn.nick, kind, clean, {
       replyTo: extra.replyTo,
       image: extra.image ? `/uploads/${extra.image}` : undefined,
     });
     store.touchRoom(room);
+    stats.bump('messages');
     const sender = conn.nick.toLowerCase();
     for (const id of this.live.get(room) ?? []) {
       const c = this.conns.get(id);
@@ -478,6 +574,329 @@ export class ChatServer {
     }
     if (!kind && !extra.image && !extra.replyTo && clean.startsWith('!')) this.qbotHears(conn, room, clean, line.id);
     if (!kind && !extra.image) this.triviaHears(conn, room, clean, line.id);
+    if (!kind && !extra.image && !extra.replyTo && clean.startsWith('!')) this.weatherHears(conn, room, clean, line.id);
+  }
+
+  // --- Live video ---------------------------------------------------------------------------
+  // The video itself goes straight between the people in the call. The server only checks who may join,
+  // keeps the list of who is there, and passes the set-up messages along.
+
+  /** room -> connection id -> who it is. */
+  private videoRooms = new Map<string, Map<string, { nick: string; account: string; cam: boolean }>>();
+  private rtcRate = new Map<string, { n: number; at: number }>();
+
+  private iceServers(): IceServer[] {
+    try {
+      const custom = process.env.QCHAT_ICE_SERVERS ? (JSON.parse(process.env.QCHAT_ICE_SERVERS) as IceServer[]) : null;
+      if (Array.isArray(custom) && custom.length > 0) return custom;
+    } catch {
+      /* fall back to the default */
+    }
+    return [{ urls: 'stun:stun.cloudflare.com:3478' }];
+  }
+
+  private videoState(room: string): ServerMsg {
+    return {
+      t: 'video',
+      room,
+      enabled: getSettings().webcamsEnabled,
+      on: !!store.getRoom(room)?.videoOn,
+      participants: [...(this.videoRooms.get(room)?.values() ?? [])].map((p) => ({ nick: p.nick, cam: p.cam })),
+      ice: this.iceServers(),
+    };
+  }
+
+  private onVideoJoin(conn: Conn, roomName: string, cam: boolean): void {
+    const room = normalizeRoom(roomName);
+    if (!this.inRoom(conn, room)) return this.send(conn, { t: 'error', text: 'You are not in that room.' });
+    const fail = (text: string) => this.send(conn, { t: 'error', text });
+    if (!getSettings().webcamsEnabled) return fail('Live video is switched off on this site.');
+    if (!store.getRoom(room)?.videoOn) return fail('Live video is not switched on in this room.');
+    const account = conn.account!.toLowerCase();
+    for (const [r, session] of this.videoRooms) {
+      for (const [id, p] of session) {
+        if (p.account === account && !(id === conn.id && r === room)) return fail('You are already in a video call (maybe in another window).');
+      }
+    }
+    const session = this.videoRooms.get(room) ?? new Map();
+    const already = session.get(conn.id);
+    if (cam) {
+      if (this.isMuted(conn, room)) return fail('You are muted in this room, so you cannot use your camera.');
+      const minHours = Number(process.env.QCHAT_CAM_MIN_AGE_HOURS ?? 24);
+      const age = Date.now() - (this.policy.lookup(conn.account!)?.createdAt ?? 0);
+      if (!this.policy.isAdmin(conn.account!) && age < minHours * 3600_000) {
+        return fail(`New accounts can watch, but need to be ${minHours} hours old before using a camera.`);
+      }
+      const cams = [...session.values()].filter((p) => p.cam && !(already && p === already)).length;
+      if (cams >= MAX_VIDEO_CAMS) return fail(`There are already ${MAX_VIDEO_CAMS} cameras on. You can watch instead.`);
+    }
+    if (!already && session.size >= MAX_VIDEO_PEOPLE) return fail('The video call is full.');
+    // Who the newcomer should connect to: everyone if they send a camera, otherwise just the cameras.
+    const peers = [...session.entries()].filter(([id, p]) => id !== conn.id && (cam || p.cam)).map(([, p]) => p.nick);
+    session.set(conn.id, { nick: conn.nick, account, cam });
+    this.videoRooms.set(room, session);
+    this.send(conn, { t: 'videoPeers', room, peers: already ? [] : peers });
+    this.broadcast(room, this.videoState(room));
+  }
+
+  /** Take a connection out of a room's call. The people who were in it are told. */
+  private leaveVideo(connId: string, room: string, reason?: string): void {
+    const session = this.videoRooms.get(room);
+    if (!session || !session.has(connId)) return;
+    session.delete(connId);
+    if (session.size === 0) this.videoRooms.delete(room);
+    const conn = this.conns.get(connId);
+    if (conn && reason) this.send(conn, { t: 'videoEnded', room, reason });
+    this.broadcast(room, this.videoState(room));
+  }
+
+  /** Everyone out of a room's call. */
+  private endVideo(room: string, reason: string): void {
+    for (const id of [...(this.videoRooms.get(room)?.keys() ?? [])]) {
+      const conn = this.conns.get(id);
+      if (conn) this.send(conn, { t: 'videoEnded', room, reason });
+    }
+    this.videoRooms.delete(room);
+    this.broadcast(room, this.videoState(room));
+  }
+
+  /** Every call on the site ends (an administrator switched video off). */
+  endAllVideo(reason: string): void {
+    for (const room of [...this.videoRooms.keys()]) this.endVideo(room, reason);
+    for (const room of this.live.keys()) this.broadcast(room, this.videoState(room));
+  }
+
+  private onRtc(conn: Conn, roomName: string, to: string, kind: string, data: unknown): void {
+    const room = normalizeRoom(roomName);
+    const session = this.videoRooms.get(room);
+    const me = session?.get(conn.id);
+    if (!session || !me) return this.send(conn, { t: 'error', text: 'You are not in that video call.' });
+    if (kind !== 'offer' && kind !== 'answer' && kind !== 'ice') return;
+    // A call needs a few dozen set-up messages; a flood of them is not a call.
+    const now = Date.now();
+    const rate = this.rtcRate.get(conn.id);
+    const fresh = !rate || now - rate.at > 60_000 ? { n: 0, at: now } : rate;
+    if (++fresh.n > 400) return;
+    this.rtcRate.set(conn.id, fresh);
+    if (JSON.stringify(data ?? null).length > 24_000) return this.send(conn, { t: 'error', text: 'That video set-up message was too big.' });
+    const target = [...session.entries()].find(([, p]) => p.nick.toLowerCase() === to.toLowerCase());
+    if (!target || target[0] === conn.id) return this.send(conn, { t: 'error', text: 'They are not in the video call.' });
+    const c = this.conns.get(target[0]);
+    if (c) this.send(c, { t: 'rtc', room, from: me.nick, kind, data });
+  }
+
+  private onVideoReport(conn: Conn, roomName: string, nick: string): void {
+    const room = normalizeRoom(roomName);
+    const session = this.videoRooms.get(room);
+    if (!this.inRoom(conn, room) || !session) return;
+    const target = [...session.values()].find((p) => p.nick.toLowerCase() === nick.toLowerCase() && p.cam);
+    if (!target) return this.send(conn, { t: 'error', text: 'They are not on camera.' });
+    if (target.account === conn.account!.toLowerCase()) return this.send(conn, { t: 'error', text: 'You cannot report yourself.' });
+    if (this.tooFast(conn)) return;
+    const added = store.addReport(conn.account!, { id: `video-${room}-${target.account}`, room, fromName: target.nick, text: '(live video)', image: null }, 'Reported from the live video');
+    if (!added) return this.send(conn, { t: 'error', text: 'You have already reported them.' });
+    this.send(conn, { t: 'info', text: 'Thanks. An admin will take a look, and room moderators have been told.' });
+    this.notifyAdmins(`New report: ${conn.nick} reported ${target.nick}'s live video in ${label(room)}.`);
+    for (const c of this.conns.values()) {
+      if (c.account && c.rooms.has(room) && this.rank(room, c.account) >= 2 && !this.policy.isAdmin(c.account)) {
+        this.send(c, { t: 'info', text: `${conn.nick} reported ${target.nick}'s live video. Use /video kick ${target.nick} to remove them.` });
+      }
+    }
+  }
+
+  // --- QWords, the word game ---------------------------------------------------------------
+
+  /** Who is watching each game: game id -> connection ids. */
+  private wgWatchers = new Map<string, Set<string>>();
+
+  private wgListFor(room: string): ServerMsg {
+    return { t: 'wgList', room, games: wg.roomGames(room).map(wg.summary) };
+  }
+
+  /** Tell everyone in a room how its list of games looks now. */
+  private wgBroadcastList(room: string): void {
+    this.broadcast(room, this.wgListFor(room));
+  }
+
+  /** Send the game to each player (with their own tiles) and to anyone watching it. */
+  private wgPush(g: wg.GameState): void {
+    for (const p of g.players) {
+      for (const c of this.connsOf(p.name)) this.send(c, { t: 'wg', id: g.id, game: wg.viewFor(g, p.key) });
+    }
+    for (const id of this.wgWatchers.get(g.id) ?? []) {
+      const c = this.conns.get(id);
+      if (!c?.account || g.players.some((p) => p.key === c.account!.toLowerCase())) continue;
+      this.send(c, { t: 'wg', id: g.id, game: wg.viewFor(g, c.account.toLowerCase()) });
+    }
+    for (const p of g.players) this.sendWgTurns(p.key);
+  }
+
+  /** The games where it is this member's turn (a badge on the Games button). */
+  private sendWgTurns(accountLower: string): void {
+    const mine = wg
+      .activeGamesOf(accountLower)
+      .filter((g) => g.status === 'playing' && g.players[g.turn]?.key === accountLower)
+      .map((g) => ({ id: g.id, room: g.room }));
+    for (const c of this.connsOf(accountLower)) this.send(c, { t: 'wgTurns', games: mine });
+  }
+
+  private onWgList(conn: Conn, roomName: string): void {
+    const room = normalizeRoom(roomName);
+    if (!this.inRoom(conn, room)) return;
+    this.send(conn, this.wgListFor(room));
+  }
+
+  private onWgCreate(conn: Conn, roomName: string, maxPlayers: number): void {
+    const room = normalizeRoom(roomName);
+    if (!this.inRoom(conn, room)) return this.send(conn, { t: 'error', text: 'You are not in that room.' });
+    if (this.isMuted(conn, room) || this.tooFast(conn)) return;
+    const me = conn.account!.toLowerCase();
+    if (wg.activeGamesOf(me).length >= MAX_GAMES_PER_MEMBER) {
+      return this.send(conn, { t: 'error', text: `You are already in ${MAX_GAMES_PER_MEMBER} word games. Finish one first.` });
+    }
+    if (wg.roomGames(room).filter((g) => g.status === 'waiting').length >= 10) {
+      return this.send(conn, { t: 'error', text: 'This room already has plenty of word games waiting for players.' });
+    }
+    const made = wg.createGame(room, conn.nick, maxPlayers);
+    if (!made.ok) return this.send(conn, { t: 'error', text: made.error });
+    this.wgWatchers.set(made.value.id, new Set([conn.id]));
+    this.broadcast(room, { t: 'system', room, text: `${conn.nick} started a word game for up to ${made.value.maxPlayers}. Open Word game to join in.` });
+    this.wgPush(made.value);
+    this.wgBroadcastList(room);
+  }
+
+  private onWgJoin(conn: Conn, id: string): void {
+    const g = wg.loadGame(id);
+    if (!g) return this.send(conn, { t: 'error', text: 'That game is not there any more.' });
+    if (!this.inRoom(conn, g.room)) return this.send(conn, { t: 'error', text: 'Join that room first, then you can join its game.' });
+    if (this.tooFast(conn)) return;
+    const me = conn.account!.toLowerCase();
+    if (wg.activeGamesOf(me).length >= MAX_GAMES_PER_MEMBER) {
+      return this.send(conn, { t: 'error', text: `You are already in ${MAX_GAMES_PER_MEMBER} word games. Finish one first.` });
+    }
+    const r = wg.joinGame(g, conn.nick);
+    if (!r.ok) return this.send(conn, { t: 'error', text: r.error });
+    this.broadcast(g.room, { t: 'system', room: g.room, text: `${conn.nick} joined the word game (${g.players.length} of ${g.maxPlayers})` });
+    this.wgPush(g);
+    this.wgBroadcastList(g.room);
+  }
+
+  private onWgLeave(conn: Conn, id: string): void {
+    const g = wg.loadGame(id);
+    if (!g) return;
+    const me = conn.account!.toLowerCase();
+    if (!g.players.some((p) => p.key === me)) return;
+    if (g.status === 'waiting') {
+      const gone = wg.leaveWaiting(g, me);
+      this.wgWatchers.get(id)?.delete(conn.id);
+      this.send(conn, { t: 'wg', id, game: null });
+      if (gone) {
+        for (const cid of this.wgWatchers.get(id) ?? []) {
+          const c = this.conns.get(cid);
+          if (c) this.send(c, { t: 'wg', id, game: null });
+        }
+        this.wgWatchers.delete(id);
+      } else {
+        this.wgPush(g);
+      }
+      this.wgBroadcastList(g.room);
+    } else if (g.status === 'playing') {
+      this.onWgMove(conn, id, (game, who) => wg.resign(game, who));
+    }
+  }
+
+  private onWgStart(conn: Conn, id: string): void {
+    const g = wg.loadGame(id);
+    if (!g) return this.send(conn, { t: 'error', text: 'That game is not there any more.' });
+    const r = wg.startGame(g, conn.account!);
+    if (!r.ok) return this.send(conn, { t: 'error', text: r.error });
+    this.broadcast(g.room, { t: 'system', room: g.room, text: `The word game has started: ${g.players.map((p) => p.name).join(', ')}. ${g.players[g.turn].name} goes first.` });
+    this.wgPush(g);
+    this.wgBroadcastList(g.room);
+  }
+
+  private onWgOpen(conn: Conn, id: string): void {
+    const g = wg.loadGame(id);
+    if (!g) return this.send(conn, { t: 'wg', id, game: null });
+    const me = conn.account!.toLowerCase();
+    if (!g.players.some((p) => p.key === me) && !this.inRoom(conn, g.room)) return;
+    const set = this.wgWatchers.get(id) ?? new Set<string>();
+    set.add(conn.id);
+    this.wgWatchers.set(id, set);
+    this.send(conn, { t: 'wg', id, game: wg.viewFor(g, me) });
+  }
+
+  /** A move by a player: run it, then tell everyone what happened. */
+  private onWgMove(conn: Conn, id: string, run: (g: wg.GameState, me: string) => wg.Result<unknown>): void {
+    const g = wg.loadGame(id);
+    if (!g) return this.send(conn, { t: 'error', text: 'That game is not there any more.' });
+    const before = g.status;
+    const r = run(g, conn.account!.toLowerCase());
+    if (!r.ok) return this.send(conn, { t: 'error', text: r.error });
+    this.wgPush(g);
+    if (before !== 'finished' && g.status === 'finished') {
+      const scores = g.players.map((p) => `${p.name} ${p.score}`).join(', ');
+      this.broadcast(g.room, { t: 'system', room: g.room, text: `The word game is over (${g.endedBy}). ${g.winner ? `${g.winner} won. ` : ''}Scores: ${scores}.` });
+      this.wgBroadcastList(g.room);
+    } else {
+      this.wgBroadcastList(g.room);
+    }
+  }
+
+  /** Waiting games nobody started, abandoned ones, old finished ones. */
+  private wgSweep(): void {
+    const { removed, ended } = wg.sweepGames();
+    for (const g of [...removed, ...ended]) {
+      this.wgWatchers.delete(g.id);
+      if (removed.includes(g)) for (const p of g.players) for (const c of this.connsOf(p.name)) this.send(c, { t: 'wg', id: g.id, game: null });
+      else this.wgPush(g);
+      this.wgBroadcastList(g.room);
+    }
+  }
+
+  /** A member is leaving for good: they resign from their games (so nobody is left waiting for them). */
+  forgetWordGames(account: string): void {
+    const lower = account.toLowerCase();
+    const mine = wg.activeGamesOf(lower).map((g) => g.id);
+    wg.forgetAccount(lower);
+    for (const id of mine) {
+      const g = wg.loadGame(id);
+      if (g) {
+        this.wgPush(g);
+        this.wgBroadcastList(g.room);
+      }
+    }
+  }
+
+  /** The morning post in the lobby: a fact or quote, and anyone's birthday. Once a day, after 8 in the morning UK time. */
+  private dailyPost(): void {
+    if (process.env.QCHAT_DAILY === 'off' || !getSettings().dailyPost) return;
+    const now = process.env.QCHAT_FAKE_NOW ? new Date(process.env.QCHAT_FAKE_NOW) : new Date();
+    const lines = takeDailyPost(now);
+    if (!lines) return;
+    for (const line of lines) this.botSay(QBOT, '#lobby', line);
+  }
+
+  private weatherCooldown = new Map<string, number>();
+
+  /** WeatherBot: !weather and !forecast. Only answers where it lives, and not more than once every ten seconds per member. */
+  private weatherHears(conn: Conn, room: string, text: string, messageId: string): void {
+    if (!botInRoom(WEATHER_BOT, room)) return;
+    const m = text.match(/^!(weather|forecast|weatherhelp)(?:\s+([\s\S]*))?$/i);
+    if (!m) return;
+    const cmd = m[1].toLowerCase();
+    const say = (t: string) => this.botSay(WEATHER_BOT, room, t, messageId);
+    if (cmd === 'weatherhelp') return void say(WEATHER_HELP);
+    const lower = conn.account!.toLowerCase();
+    const last = this.weatherCooldown.get(lower) ?? 0;
+    if (Date.now() - last < 10_000) return void this.toast(conn.account!, 'WeatherBot needs a few seconds between questions.');
+    this.weatherCooldown.set(lower, Date.now());
+    let place = (m[2] ?? '').trim();
+    if (!place) place = getProfileOf(conn.account!)?.location ?? '';
+    if (!place) return void say('Tell me a place, like !weather London, or add a location to your profile.');
+    void weatherReply(cmd === 'forecast' ? 'forecast' : 'now', place).then((reply) => {
+      if (botInRoom(WEATHER_BOT, room)) say(reply);
+    });
   }
 
   private qbotCooldown = new Map<string, number>(); // account -> last command time
@@ -547,6 +966,7 @@ export class ChatServer {
           nick: conn.nick,
           room,
           topic: store.getRoom(room)?.topic ?? null,
+          rules: store.getRoom(room)?.rules ?? null,
           rooms,
           stats: { members: store.countMembers(), online: this.onlineAccounts().size, rooms: store.roomCount() },
         });
@@ -708,6 +1128,7 @@ export class ChatServer {
     if (this.screened(conn, clean)) return;
     const edited = store.editMessage(id, clean);
     this.broadcast(room, { t: 'edited', room, id, text: clean, edited });
+    if (store.isPinned(room, id)) this.broadcast(room, { t: 'pins', room, pins: store.pinsOf(room) });
   }
 
   private onDelete(conn: Conn, roomName: string, id: string): void {
@@ -721,11 +1142,43 @@ export class ChatServer {
     }
     store.deleteMessage(id, conn.nick);
     this.broadcast(room, { t: 'deleted', room, id });
+    this.dropPin(room, id);
   }
 
   // --- Private messages ---------------------------------------------------------
 
   // --- Reactions, reports, search, room settings -----------------------------------
+
+  /** A deleted message cannot stay pinned. */
+  private dropPin(room: string, id: string): void {
+    if (!store.isPinned(room, id)) return;
+    store.unpinMessage(room, id);
+    this.broadcast(room, { t: 'pins', room, pins: store.pinsOf(room) });
+  }
+
+  private onPin(conn: Conn, roomName: string, id: string, pin: boolean): void {
+    const room = normalizeRoom(roomName);
+    if (!this.inRoom(conn, room)) return;
+    if (this.rank(room, conn.account!) < 2) {
+      return this.send(conn, { t: 'error', text: 'Only moderators can pin messages.' });
+    }
+    const msg = store.getMessage(room, id);
+    if (!msg || msg.deleted) return this.send(conn, { t: 'error', text: 'That message no longer exists.' });
+    if (pin) {
+      if (store.isPinned(room, id)) return;
+      if (store.pinsOf(room).length >= MAX_PINS) {
+        return this.send(conn, { t: 'error', text: `A room can have ${MAX_PINS} pinned messages. Unpin one first.` });
+      }
+      store.pinMessage(room, id, conn.nick);
+      this.broadcast(room, { t: 'pins', room, pins: store.pinsOf(room) });
+      this.broadcast(room, { t: 'system', room, text: `${conn.nick} pinned a message from ${msg.fromName}` });
+    } else {
+      if (!store.isPinned(room, id)) return;
+      store.unpinMessage(room, id);
+      this.broadcast(room, { t: 'pins', room, pins: store.pinsOf(room) });
+      this.broadcast(room, { t: 'system', room, text: `${conn.nick} unpinned a message` });
+    }
+  }
 
   private onReact(conn: Conn, roomName: string, id: string, emoji: string): void {
     const room = normalizeRoom(roomName);
@@ -914,6 +1367,7 @@ export class ChatServer {
     if (this.screened(conn, clean)) return;
 
     const msg = store.addDm(me, target.account, kind, clean);
+    stats.bump('dms');
     for (const c of [...this.connsOf(me), ...this.connsOf(target.account)]) this.send(c, { t: 'dm', msg });
 
     const theirs = this.connsOf(target.account);
@@ -991,6 +1445,126 @@ export class ChatServer {
         const sp = args.match(/^(\S+)\s+([\s\S]+)$/);
         if (!sp) return fail('Use /msg <member> <text>.');
         return this.onDm(conn, sp[1], sp[2]);
+      }
+
+      case 'video': {
+        const [sub, ...restWords] = args.split(/\s+/);
+        const row = store.getRoom(room);
+        if (!sub) {
+          const enabled = getSettings().webcamsEnabled;
+          return note(
+            !enabled
+              ? 'Live video is switched off on this site.'
+              : `Video in this room is ${row?.videoOn ? 'on' : 'off'}${row?.videoOn ? ` (${this.videoRooms.get(room)?.size ?? 0} in the call)` : ''}. The room owner can change it with /video on or /video off.`,
+          );
+        }
+        if (sub.toLowerCase() === 'kick') {
+          if (this.rank(room, me) < 2) return fail('Only moderators can do that.');
+          const t = this.policy.lookup(restWords.join(' '));
+          const session = this.videoRooms.get(room);
+          const target = t && [...(session?.entries() ?? [])].find(([, p]) => p.nick.toLowerCase() === t.account.toLowerCase());
+          if (!target) return fail('They are not in the video.');
+          if (this.rank(room, t!.account) >= this.rank(room, me)) return fail('You cannot remove someone of equal or higher rank.');
+          this.leaveVideo(target[0], room, `${conn.nick} removed you from the video.`);
+          return void this.broadcast(room, { t: 'system', room, text: `${t!.account} was removed from the video by ${conn.nick}` });
+        }
+        if (this.rank(room, me) < 3) return fail('Only the room owner can switch video on or off.');
+        if (sub.toLowerCase() === 'on') {
+          if (!getSettings().webcamsEnabled) return fail('An administrator has switched live video off for the whole site.');
+          store.setVideo(room, true);
+          this.broadcast(room, this.videoState(room));
+          return void this.broadcast(room, { t: 'system', room, text: `${conn.nick} switched on live video. Use the video button to join. Everyone in the call can see who is there.` });
+        }
+        if (sub.toLowerCase() === 'off') {
+          store.setVideo(room, false);
+          this.endVideo(room, `${conn.nick} switched off the video.`);
+          return void this.broadcast(room, { t: 'system', room, text: `${conn.nick} switched off live video` });
+        }
+        return fail('Use /video on, /video off or /video kick <member>.');
+      }
+
+      case 'skip':
+        return this.onMediaSkip(conn, room);
+
+      case 'queue': {
+        const q = this.queues.get(room) ?? [];
+        if (q.length === 0) return note('The queue is empty. Paste a link and press Queue to add something.');
+        note(`Waiting to play (${q.length}):`);
+        q.forEach((item, i) => note(`${i + 1}. ${item.title || mediaLink(item)} (added by ${item.by})`));
+        return;
+      }
+
+      case 'radio': {
+        const row = store.getRoom(room);
+        const tracks = store.radioTracks(room);
+        const [sub, ...restWords] = args.split(/\s+/);
+        const rest = restWords.join(' ').trim();
+        if (!sub) {
+          note(`The radio is ${row?.radioOn ? 'on' : 'off'} with ${tracks.length} track${tracks.length === 1 ? '' : 's'}.`);
+          tracks.forEach((t, i) => note(`${i + 1}. ${t.title || mediaLink(t)}`));
+          return;
+        }
+        if (this.rank(room, me) < 3) return fail('Only the room owner can change the radio.');
+        const refresh = () => this.broadcast(room, this.radioState(room));
+        switch (sub.toLowerCase()) {
+          case 'on':
+            if (tracks.length === 0) return fail('Add a track first: /radio add <link>');
+            store.setRadio(room, true);
+            this.radioHold.delete(room);
+            refresh();
+            this.broadcast(room, { t: 'system', room, text: `${conn.nick} turned the room radio on` });
+            return this.maybeStartRadio(room);
+          case 'off': {
+            store.setRadio(room, false);
+            refresh();
+            if (this.media.get(room)?.radio) this.advanceMedia(room);
+            return void this.broadcast(room, { t: 'system', room, text: `${conn.nick} turned the room radio off` });
+          }
+          case 'add': {
+            const m = parseMediaUrl(rest);
+            if (!m) return fail('Use /radio add <link>, with a YouTube, Vimeo or SoundCloud link.');
+            if (isLive(m.provider)) return fail('A live stream never ends, so it cannot go on the radio.');
+            if (tracks.length >= MAX_RADIO_TRACKS) return fail(`The radio can hold ${MAX_RADIO_TRACKS} tracks.`);
+            void lookupTitle(m.provider, m.ref).then((title) => {
+              if (store.radioTracks(room).length >= MAX_RADIO_TRACKS || !store.getRoom(room)) return;
+              store.addRadioTrack(room, m.provider, m.ref, title ?? '');
+              refresh();
+              this.send(conn, { t: 'info', text: `Added ${title ?? 'the track'} to the radio.` });
+              if (store.getRoom(room)?.radioOn) this.maybeStartRadio(room);
+            });
+            return;
+          }
+          case 'remove': {
+            const n = Number(rest);
+            const t = Number.isInteger(n) ? tracks[n - 1] : undefined;
+            if (!t) return fail('Use /radio remove <number>, as numbered by /radio.');
+            store.removeRadioTrack(room, t.id);
+            return refresh();
+          }
+          case 'clear':
+            store.clearRadioTracks(room);
+            store.setRadio(room, false);
+            refresh();
+            if (this.media.get(room)?.radio) this.advanceMedia(room);
+            return;
+          default:
+            return fail('Use /radio on, off, add <link>, remove <number> or clear.');
+        }
+      }
+
+      case 'rules': {
+        const row = store.getRoom(room);
+        if (!args) {
+          const r = store.rulesOf(row);
+          return note(r ? `Rules of ${label(room)}: ${r.text}` : 'This room has no rules posted.');
+        }
+        if (this.rank(room, me) < 3) return fail('Only the room owner can change the rules.');
+        const clear = args.toLowerCase() === 'clear' || args === '-';
+        const text = clear ? null : sanitize(args).slice(0, MAX_RULES);
+        store.setRules(room, text, conn.nick);
+        this.broadcast(room, { t: 'rules', room, rules: store.rulesOf(store.getRoom(room)) });
+        this.broadcast(room, { t: 'system', room, text: text ? `${conn.nick} updated the room rules` : `${conn.nick} removed the room rules` });
+        return;
       }
 
       case 'topic': {
@@ -1193,6 +1767,23 @@ export class ChatServer {
   // --- Roles and permissions -------------------------------------------------------
 
   /** 4 admin, 3 room owner, 2 room moderator, 0 everyone else. */
+  private spam = new SpamWatch();
+
+  /** The same message again and again: mute them in this room (longer each time) and say so. */
+  private spamMuted(conn: Conn, room: string, text: string): boolean {
+    const account = conn.account!;
+    if (!getSettings().autoMuteSpam || this.rank(room, account) >= 2) return false;
+    const minutes = this.spam.check(account.toLowerCase(), text);
+    if (!minutes) return false;
+    const span = minutes >= 1440 ? 'a day' : minutes >= 60 ? 'an hour' : `${minutes} minutes`;
+    store.addMute(room, account.toLowerCase(), Date.now() + minutes * 60000, 'QChat', 'repeating the same message (automatic)');
+    store.logAudit('automute', account, `${room}, ${minutes} minutes`);
+    this.log(`auto-muted ${account} in ${room} for ${minutes} minutes for repeating a message`);
+    this.send(conn, { t: 'error', text: `You have been muted for ${span} for repeating the same message.` });
+    this.broadcast(room, { t: 'system', room, text: `${conn.nick} was muted for ${span} for repeating the same message (automatic)` });
+    return true;
+  }
+
   /**
    * Apply the administrators' blocked words and the new-member link rule. Tells the sender why and returns
    * true when the message must not be sent.
@@ -1270,24 +1861,194 @@ export class ChatServer {
 
   // --- Media ----------------------------------------------------------------------
 
-  private onPlayYouTube(conn: Conn, roomName: string, ref: string, title?: string): void {
+  /** Things waiting to play in each room, and who has voted to skip what is playing. */
+  private queues = new Map<string, QueueItem[]>();
+  private skipVotes = new Map<string, Set<string>>();
+  /** Rooms where someone stopped the radio: it stays quiet until the room empties or the radio is switched on again. */
+  private radioHold = new Set<string>();
+
+  private noun(p: MediaProvider): string {
+    return p === 'soundcloud' ? 'a track' : p === 'twitch' ? 'a live stream' : 'a video';
+  }
+
+  private queueState(room: string): ServerMsg {
+    return {
+      t: 'queue',
+      room,
+      items: this.queues.get(room) ?? [],
+      skipVotes: this.skipVotes.get(room)?.size ?? 0,
+      skipNeeded: Math.floor(this.memberNicks(room).length / 2) + 1,
+    };
+  }
+
+  private broadcastQueue(room: string): void {
+    this.broadcast(room, this.queueState(room));
+  }
+
+  private radioState(room: string): ServerMsg {
+    return { t: 'radio', room, on: store.getRoom(room)?.radioOn ?? false, tracks: store.radioTracks(room) };
+  }
+
+  /** Forget everything about a room's media (it was closed or cleared). */
+  private forgetMedia(room: string): void {
+    this.media.delete(room);
+    this.queues.delete(room);
+    this.skipVotes.delete(room);
+    this.radioHold.delete(room);
+  }
+
+  private onPlayMedia(conn: Conn, roomName: string, url: string, title?: string): void {
     const room = normalizeRoom(roomName);
     if (!this.inRoom(conn, room) || this.isMuted(conn, room)) return;
-    const id = youTubeId(ref);
-    if (!id) return this.send(conn, { t: 'error', text: 'That is not a valid YouTube link.' });
-    const cleanTitle = title ? title.slice(0, 120) : undefined;
+    const m = parseMediaUrl(url);
+    if (!m) return this.send(conn, { t: 'error', text: 'That is not a link I can play. Try YouTube, Vimeo, SoundCloud or Twitch.' });
+    this.startMedia(room, { ...m, by: conn.nick }, title);
+  }
+
+  /** Start something now, replacing whatever is playing. */
+  private startMedia(room: string, item: { provider: MediaProvider; ref: string; by: string; radio?: boolean }, knownTitle?: string): void {
     const state: MediaState = {
-      kind: 'youtube',
-      ref: id,
-      title: cleanTitle,
-      by: conn.nick,
+      kind: item.provider,
+      ref: item.ref,
+      title: knownTitle ? cleanTitle(knownTitle) || undefined : undefined,
+      by: item.by,
       paused: false,
       startedAt: Date.now(),
       pausedPos: 0,
+      ...(item.radio ? { radio: true as const } : {}),
     };
     this.media.set(room, state);
+    this.skipVotes.delete(room);
     this.broadcast(room, { t: 'media', room, state });
-    this.broadcast(room, { t: 'system', room, text: `${conn.nick} started a video${cleanTitle ? `: ${cleanTitle}` : ''}` });
+    this.broadcastQueue(room);
+    // The name comes from the service itself, a moment later; the picture and sound do not wait for it.
+    void (async () => {
+      const title = state.title ?? (await lookupTitle(item.provider, item.ref)) ?? undefined;
+      if (this.media.get(room) !== state) return; // something else started in the meantime
+      if (title && !state.title) {
+        state.title = title;
+        this.broadcast(room, { t: 'media', room, state });
+      }
+      if (!item.radio) {
+        this.broadcast(room, { t: 'system', room, text: `${item.by} started ${this.noun(item.provider)}${title ? `: ${title}` : ''}` });
+      }
+    })();
+  }
+
+  /** What the radio would play next in this room, or null. Moves the radio on. */
+  private radioNext(room: string): { provider: MediaProvider; ref: string; title: string } | null {
+    const row = store.getRoom(room);
+    if (!row?.radioOn) return null;
+    const tracks = store.radioTracks(room);
+    if (tracks.length === 0) return null;
+    const i = row.radioPos % tracks.length;
+    store.setRadioPos(room, (i + 1) % tracks.length);
+    return tracks[i];
+  }
+
+  /** Start the radio if the room is on it, has listeners, and nothing else is going on. */
+  private maybeStartRadio(room: string): void {
+    if (this.media.has(room) || this.radioHold.has(room) || (this.queues.get(room)?.length ?? 0) > 0) return;
+    if (this.memberNicks(room).length === 0) return;
+    const next = this.radioNext(room);
+    if (next) this.startMedia(room, { provider: next.provider, ref: next.ref, by: 'Radio', radio: true }, next.title);
+  }
+
+  /** The current thing is over: play the next in the queue, else the radio, else leave the room quiet. */
+  private advanceMedia(room: string, endedLine?: string): void {
+    const next = this.queues.get(room)?.shift();
+    if (next) {
+      this.startMedia(room, { provider: next.provider, ref: next.ref, by: next.by }, next.title || undefined);
+      return;
+    }
+    const radio = this.radioNext(room);
+    if (radio && !this.radioHold.has(room)) {
+      this.startMedia(room, { provider: radio.provider, ref: radio.ref, by: 'Radio', radio: true }, radio.title);
+      return;
+    }
+    this.media.delete(room);
+    this.skipVotes.delete(room);
+    this.broadcast(room, { t: 'media', room, state: null });
+    this.broadcastQueue(room);
+    if (endedLine) this.broadcast(room, { t: 'system', room, text: endedLine });
+  }
+
+  private onQueueAdd(conn: Conn, roomName: string, url: string): void {
+    const room = normalizeRoom(roomName);
+    if (!this.inRoom(conn, room) || this.isMuted(conn, room)) return;
+    const m = parseMediaUrl(url);
+    if (!m) return this.send(conn, { t: 'error', text: 'That is not a link I can play. Try YouTube, Vimeo, SoundCloud or Twitch.' });
+    if (isLive(m.provider)) {
+      return this.send(conn, { t: 'error', text: 'A live stream never ends, so it cannot be queued. Play it for the room instead.' });
+    }
+    if (!this.media.has(room)) return this.startMedia(room, { ...m, by: conn.nick });
+    const queue = this.queues.get(room) ?? [];
+    if (queue.length >= MAX_QUEUE) return this.send(conn, { t: 'error', text: `The queue is full (${MAX_QUEUE}).` });
+    if (queue.filter((q) => q.by.toLowerCase() === conn.nick.toLowerCase()).length >= MAX_QUEUE_PER_MEMBER) {
+      return this.send(conn, { t: 'error', text: `You already have ${MAX_QUEUE_PER_MEMBER} things in the queue. Wait for one to play.` });
+    }
+    const item: QueueItem = { id: randomUUID().slice(0, 8), provider: m.provider, ref: m.ref, title: '', by: conn.nick };
+    queue.push(item);
+    this.queues.set(room, queue);
+    this.broadcastQueue(room);
+    void lookupTitle(m.provider, m.ref).then((title) => {
+      if (!(this.queues.get(room) ?? []).includes(item)) return; // already played or removed
+      if (title) item.title = title;
+      this.broadcastQueue(room);
+      this.broadcast(room, { t: 'system', room, text: `${conn.nick} queued ${title ?? this.noun(m.provider)}` });
+    });
+  }
+
+  private onQueueRemove(conn: Conn, roomName: string, id: string): void {
+    const room = normalizeRoom(roomName);
+    if (!this.inRoom(conn, room)) return;
+    const queue = this.queues.get(room) ?? [];
+    const rank = this.rank(room, conn.account!);
+    if (id === 'all') {
+      if (rank < 2) return this.send(conn, { t: 'error', text: 'Only moderators can clear the queue.' });
+      this.queues.delete(room);
+      this.broadcastQueue(room);
+      this.broadcast(room, { t: 'system', room, text: `${conn.nick} cleared the queue` });
+      return;
+    }
+    const item = queue.find((q) => q.id === id);
+    if (!item) return;
+    if (item.by.toLowerCase() !== conn.nick.toLowerCase() && rank < 2) {
+      return this.send(conn, { t: 'error', text: 'You can only remove your own things from the queue.' });
+    }
+    this.queues.set(room, queue.filter((q) => q !== item));
+    this.broadcastQueue(room);
+  }
+
+  private onMediaSkip(conn: Conn, roomName: string): void {
+    const room = normalizeRoom(roomName);
+    if (!this.inRoom(conn, room) || this.isMuted(conn, room)) return;
+    const state = this.media.get(room);
+    if (!state) {
+      // Nothing is playing: "skip" starts whatever is waiting.
+      if ((this.queues.get(room)?.length ?? 0) === 0 && !store.getRoom(room)?.radioOn) {
+        return this.send(conn, { t: 'error', text: 'Nothing is playing and nothing is waiting.' });
+      }
+      this.radioHold.delete(room);
+      this.advanceMedia(room);
+      return;
+    }
+    const lower = conn.account!.toLowerCase();
+    const mine = state.by.toLowerCase() === conn.nick.toLowerCase();
+    const votes = this.skipVotes.get(room) ?? new Set<string>();
+    votes.add(lower);
+    this.skipVotes.set(room, votes);
+    const needed = Math.floor(this.memberNicks(room).length / 2) + 1;
+    if (mine || this.rank(room, conn.account!) >= 2) {
+      this.broadcast(room, { t: 'system', room, text: `${conn.nick} skipped it` });
+      this.advanceMedia(room, 'Nothing else is waiting');
+    } else if (votes.size >= needed) {
+      this.broadcast(room, { t: 'system', room, text: 'The room voted to skip it' });
+      this.advanceMedia(room, 'Nothing else is waiting');
+    } else {
+      this.broadcast(room, { t: 'system', room, text: `${conn.nick} voted to skip (${votes.size} of ${needed})` });
+      this.broadcastQueue(room);
+    }
   }
 
   private onMediaControl(
@@ -1303,17 +2064,18 @@ export class ChatServer {
     if (!state) return; // already cleared (several watchers report the end at the same moment)
     const now = Date.now();
     if (op === 'ended') {
-      // The video ran to its end. Only about the video that is playing, and never within the first seconds.
+      // It ran to its end. Only about what is playing, and never within the first seconds.
       if (ref !== state.ref || state.paused || now - state.startedAt < 3000) return;
-      this.media.delete(room);
-      this.broadcast(room, { t: 'media', room, state: null });
-      this.broadcast(room, { t: 'system', room, text: 'The video has finished' });
+      this.advanceMedia(room, state.kind === 'soundcloud' ? 'The track has finished' : 'The video has finished');
       return;
     }
     if (op === 'stop') {
       this.media.delete(room);
+      this.skipVotes.delete(room);
+      if (store.getRoom(room)?.radioOn) this.radioHold.add(room);
       this.broadcast(room, { t: 'media', room, state: null });
-      this.broadcast(room, { t: 'system', room, text: `${conn.nick} stopped the video` });
+      this.broadcastQueue(room);
+      this.broadcast(room, { t: 'system', room, text: `${conn.nick} stopped the ${state.kind === 'soundcloud' ? 'track' : 'video'}` });
       return;
     }
     if (op === 'pause' && !state.paused) {
@@ -1335,6 +2097,10 @@ export class ChatServer {
     const room = normalizeRoom(roomName);
     if (!this.inRoom(conn, room) || !/^[a-z0-9_-]{1,24}$/.test(sound)) return;
     if (this.isMuted(conn, room) || this.tooFast(conn)) return;
+    // A member's own clip only plays once an administrator has approved it.
+    if (/^c\d+$/.test(sound) && !isApprovedSound(sound)) {
+      return this.send(conn, { t: 'error', text: 'That sound is not available.' });
+    }
     this.broadcast(room, { t: 'sound', room, sound, from: conn.nick });
   }
 
@@ -1437,7 +2203,8 @@ export class ChatServer {
       this.send(c, { t: 'error', text: toast });
     }
     this.live.delete(room);
-    this.media.delete(room);
+    this.forgetMedia(room);
+    this.videoRooms.delete(room);
     store.deleteRoom(room);
   }
 
@@ -1512,7 +2279,8 @@ export class ChatServer {
         this.send(c, { t: 'error', text: `${label(room)} was closed by an administrator.` });
       }
       this.live.delete(room);
-      this.media.delete(room);
+      this.forgetMedia(room);
+      this.videoRooms.delete(room);
       store.clearRoom(room);
     } else {
       this.destroyRoom(room, `${label(room)} was closed by an administrator.`);
@@ -1534,6 +2302,7 @@ export class ChatServer {
     if (!msg || msg.deleted) return false;
     store.deleteMessage(id, `${by} (admin)`);
     this.broadcast(room, { t: 'deleted', room, id });
+    this.dropPin(room, id);
     return true;
   }
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { login, register, siteStatus, type AuthResult, type SiteStatus } from '../api.js';
+import { forgotPassword, login, register, siteStatus, type AuthResult, type SiteStatus } from '../api.js';
 import { LogoMark, Wordmark } from './Logo.js';
 
 const FEATURES = [
@@ -16,7 +16,8 @@ interface Props {
 
 /** The front door: chatting needs an account, so this is all you see until you log in. */
 export function Gate({ onAuthed, notice }: Props) {
-  const [mode, setMode] = useState<'login' | 'signup'>('login');
+  const [mode, setMode] = useState<'login' | 'signup' | 'forgot'>('login');
+  const [sent, setSent] = useState(false);
   const [account, setAccount] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -39,6 +40,19 @@ export function Gate({ onAuthed, notice }: Props) {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    if (mode === 'forgot') {
+      if (!account.trim()) return setError('Enter your username or email address.');
+      setBusy(true);
+      try {
+        await forgotPassword(account.trim());
+        setSent(true);
+      } catch (err) {
+        setError((err as Error).message);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     if (!account.trim() || !password) {
       setError('Enter your username and password.');
       return;
@@ -71,7 +85,7 @@ export function Gate({ onAuthed, notice }: Props) {
         <span className="cb cb5">✨</span>
       </div>
 
-      <div className="gate-inner">
+      <main className="gate-inner">
         <section className="gate-hero">
           <div className="gate-logo">
             <LogoMark size={76} />
@@ -121,15 +135,38 @@ export function Gate({ onAuthed, notice }: Props) {
             </button>
           </div>
 
-          <h2>{signupMode ? 'Join QChat' : 'Welcome back'}</h2>
+          <h2>{mode === 'forgot' ? 'Forgot your password?' : signupMode ? 'Join QChat' : 'Welcome back'}</h2>
           <p className="gate-sub">
-            {signupMode ? 'Pick a username and password to get started.' : 'Log in to start chatting.'}
+            {mode === 'forgot'
+              ? 'We will email you a link to choose a new one.'
+              : signupMode
+                ? 'Pick a username and password to get started.'
+                : 'Log in to start chatting.'}
           </p>
 
           {site?.maintenance && (
             <p className="gate-warn">QChat is down for maintenance. Only admins can log in right now.</p>
           )}
-          {mode === 'signup' && signupClosed ? (
+          {mode === 'forgot' ? (
+            sent ? (
+              <>
+                <p className="gate-note" role="status">
+                  If that matches an account with a confirmed email address, a link is on its way. It works for an hour. Check your spam folder too.
+                </p>
+                <button type="button" className="gate-submit" onClick={() => { setMode('login'); setSent(false); }}>Back to log in</button>
+              </>
+            ) : (
+              <>
+                <label>
+                  Username or email address
+                  <input autoFocus value={account} onChange={(e) => setAccount(e.target.value)} autoComplete="username" />
+                </label>
+                {message && <p className="pm-error">{message}</p>}
+                <button type="submit" disabled={busy} className="gate-submit">{busy ? 'Please wait…' : 'Email me a link'}</button>
+                <button type="button" className="gate-link" onClick={() => { setMode('login'); setError(null); }}>Back to log in</button>
+              </>
+            )
+          ) : mode === 'signup' && signupClosed ? (
             <p className="gate-warn">Sign ups are closed right now. If you already have an account, log in instead.</p>
           ) : (
             <>
@@ -145,7 +182,7 @@ export function Gate({ onAuthed, notice }: Props) {
               </label>
               {signupMode && (
                 <label>
-                  Email <span className="optional">(optional)</span>
+                  Email <span className="optional">(optional{site?.mailEnabled ? ', lets you reset a forgotten password' : ''})</span>
                   <input
                     type="email"
                     value={email}
@@ -180,11 +217,14 @@ export function Gate({ onAuthed, notice }: Props) {
               <button type="submit" disabled={busy} className="gate-submit">
                 {busy ? 'Please wait…' : signupMode ? 'Create my account' : 'Log in'}
               </button>
+              {!signupMode && site?.mailEnabled && (
+                <button type="button" className="gate-link" onClick={() => { setMode('forgot'); setError(null); setSent(false); }}>Forgot your password?</button>
+              )}
             </>
           )}
           {mode === 'signup' && signupClosed && message && <p className="pm-error">{message}</p>}
         </form>
-      </div>
+      </main>
       <footer className="gate-foot">
         <a href="/terms" target="_blank" rel="noopener">Terms of Use</a>
         <a href="/privacy" target="_blank" rel="noopener">Privacy Notice</a>

@@ -1,5 +1,9 @@
 import {
   PROFILE_FIELDS,
+  PRIVATE_BY_DEFAULT,
+  SKINS,
+  THEMES,
+  parseBirthday,
   defaultPrefs,
   fieldVisible,
   type Profile,
@@ -16,6 +20,7 @@ function validAccent(v: unknown): string | null {
 }
 
 function cleanField(f: ProfileField, raw: unknown): DbVal {
+  if (f.type === 'birthday') return parseBirthday(String(raw ?? ''));
   if (f.type === 'number') {
     const n = parseInt(String(raw ?? ''), 10);
     return Number.isFinite(n) && n >= 13 && n <= 120 ? n : null;
@@ -82,6 +87,8 @@ export function getPrefs(account: string): ProfilePrefs {
       visible: d.visible && typeof d.visible === 'object' ? d.visible : {},
       allowPm: d.allowPm !== false,
       autoplay: d.autoplay !== false,
+      theme: THEMES.some((t) => t.id === d.theme) ? (d.theme as ProfilePrefs['theme']) : 'dark',
+      skin: SKINS.some((s) => s.id === d.skin) ? String(d.skin) : 'default',
     };
   } catch {
     return base;
@@ -94,13 +101,16 @@ export function savePrefs(account: string, patch: Record<string, unknown>): Prof
   if (patch.visible && typeof patch.visible === 'object') {
     for (const f of PROFILE_FIELDS) {
       if (f.key === 'displayName') continue;
-      visible[f.key as string] = (patch.visible as Record<string, unknown>)[f.key as string] !== false;
+      const v = (patch.visible as Record<string, unknown>)[f.key as string];
+      visible[f.key as string] = PRIVATE_BY_DEFAULT.includes(f.key as string) ? v === true : v !== false;
     }
   }
   const next: ProfilePrefs = {
     visible: patch.visible && typeof patch.visible === 'object' ? visible : cur.visible,
     allowPm: typeof patch.allowPm === 'boolean' ? patch.allowPm : cur.allowPm,
     autoplay: typeof patch.autoplay === 'boolean' ? patch.autoplay : cur.autoplay,
+    theme: THEMES.some((t) => t.id === patch.theme) ? (patch.theme as ProfilePrefs['theme']) : cur.theme,
+    skin: SKINS.some((s) => s.id === patch.skin) ? String(patch.skin) : cur.skin,
   };
   db.prepare('UPDATE profiles SET prefs = ?, updatedAt = ? WHERE accountLower = ?')
     .run(JSON.stringify(next), Date.now(), account.toLowerCase());

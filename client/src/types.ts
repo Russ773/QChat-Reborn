@@ -1,4 +1,4 @@
-import type { BotInfo, DmThread, FriendInfo, MediaState, ReplyRef, RoomInfo, RoomRole, RoomTopic } from '@qchat/shared';
+import type { BotInfo, DmThread, FriendInfo, MediaState, ReplyRef, RoomInfo, RoomRole, PinInfo, RoomRules, QueueItem, RadioTrack, WordGameSummary, WordGameView, IceServer, VideoParticipant, RoomTopic } from '@qchat/shared';
 import type { ChatStatus } from './chat/client.js';
 
 export type ChatEventKind =
@@ -61,7 +61,17 @@ export interface RoomState {
   mentions: number;
   /** The room's current synced media, or null. */
   media: MediaState | null;
+  /** Live video: the site and room switches, and who is in the call. */
+  video: { enabled: boolean; on: boolean; participants: VideoParticipant[]; ice: IceServer[] };
+  /** What is waiting to play, and the vote to skip the current thing. */
+  queue: { items: QueueItem[]; skipVotes: number; skipNeeded: number };
+  /** The room's radio: on or off, and its tracks. */
+  radio: { on: boolean; tracks: RadioTrack[] };
   topic: RoomTopic | null;
+  /** The rules the room's owner posted, if any. */
+  rules: RoomRules | null;
+  /** Messages moderators pinned, newest first. */
+  pins: PinInfo[];
   roles: Record<string, RoomRole>;
   away: string[];
   /** The bots in this room (never counted as members). */
@@ -121,4 +131,10 @@ export interface AppState {
   requests: { incoming: string[]; outgoing: string[] };
   /** Room settings for the panel moderators can open. */
   roomAdmin: RoomAdminInfo | null;
+  /** The word games in each room (as last reported). */
+  wgGames: Record<string, WordGameSummary[]>;
+  /** Games you have opened or play in, as you see them (null once removed). */
+  wgViews: Record<string, WordGameView | null>;
+  /** The games where it is your turn. */
+  wgTurns: { id: string; room: string }[];
 }

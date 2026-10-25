@@ -34,7 +34,7 @@ export class ChatClient {
     ws.onclose = () => this.handlers.onStatus('closed');
   }
 
-  private send(msg: ClientMsg): void {
+  send(msg: ClientMsg): void {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(encodeMsg(msg));
     }
@@ -48,6 +48,9 @@ export class ChatClient {
   }
   say(room: string, text: string, extra: { replyTo?: string; image?: string } = {}): void {
     this.send({ t: 'say', room, text, ...extra });
+  }
+  pin(room: string, id: string, pin: boolean): void {
+    this.send({ t: 'pin', room, id, pin });
   }
   react(room: string, id: string, emoji: string): void {
     this.send({ t: 'react', room, id, emoji });
@@ -75,6 +78,18 @@ export class ChatClient {
   }
   playYouTube(room: string, ref: string, title?: string): void {
     this.send({ t: 'playYouTube', room, ref, title });
+  }
+  playMedia(room: string, url: string): void {
+    this.send({ t: 'playMedia', room, url });
+  }
+  queueAdd(room: string, url: string): void {
+    this.send({ t: 'queueAdd', room, url });
+  }
+  queueRemove(room: string, id: string): void {
+    this.send({ t: 'queueRemove', room, id });
+  }
+  mediaSkip(room: string): void {
+    this.send({ t: 'mediaSkip', room });
   }
   mediaControl(room: string, op: 'pause' | 'resume' | 'seek' | 'stop' | 'ended', pos?: number, ref?: string): void {
     this.send({ t: 'mediaControl', room, op, pos, ref });

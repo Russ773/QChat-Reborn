@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { REACTION_EMOJI } from '@qchat/shared';
+import { REACTION_EMOJI, parseMediaUrl } from '@qchat/shared';
 import type { ChatEvent } from '../types.js';
-import { classify, linkify } from '../media/urls.js';
-import { colorForNick } from '../colors.js';
+import { linkify } from '../media/urls.js';
+import { nickInk } from '../colors.js';
 import { Avatar } from './Avatar.js';
 
 interface Props {
@@ -21,6 +21,9 @@ interface Props {
   onReact?: (emoji: string) => void;
   /** Present when the viewer may report it (not their own). */
   onReport?: () => void;
+  /** Present when the viewer may pin or unpin it (moderators). */
+  onPin?: () => void;
+  pinned?: boolean;
   /** Open the author's profile. */
   onProfile?: (name: string) => void;
   /** The author's profile photo, if they have one. */
@@ -29,7 +32,7 @@ interface Props {
   botEmoji?: string;
 }
 
-export function Message({ event, me, grouped, onEnqueue, onEdit, onDelete, onReply, onReact, onReport, onProfile, avatar, botEmoji }: Props) {
+export function Message({ event, me, grouped, onEnqueue, onEdit, onDelete, onReply, onReact, onReport, onPin, pinned, onProfile, avatar, botEmoji }: Props) {
   const time = new Date(event.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(event.text);
@@ -67,7 +70,7 @@ export function Message({ event, me, grouped, onEnqueue, onEdit, onDelete, onRep
     return (
       <div className={`msg action ${event.mention ? 'mention' : ''}`}>
         <span className="ts">{time}</span>
-        <span className="action-text" style={{ color: colorForNick(event.from ?? '') }}>
+        <span className="action-text" style={{ color: nickInk(event.from ?? '') }}>
           * {event.from} {renderText(event.text, onEnqueue)}
         </span>
         <Tools onDelete={onDelete} onReport={onReport} />
@@ -99,7 +102,7 @@ export function Message({ event, me, grouped, onEnqueue, onEdit, onDelete, onRep
           <button
             type="button"
             className="nick"
-            style={{ color: colorForNick(event.from ?? '') }}
+            style={{ color: nickInk(event.from ?? '') }}
             onClick={() => event.from && onProfile?.(event.from)}
           >
             {event.from}
@@ -149,6 +152,8 @@ export function Message({ event, me, grouped, onEnqueue, onEdit, onDelete, onRep
             }
             onDelete={onDelete}
             onReport={onReport}
+            onPin={onPin}
+            pinned={pinned}
           />
         </div>
       )}
@@ -183,7 +188,11 @@ function Tools({
   onEdit,
   onDelete,
   onReport,
+  onPin,
+  pinned,
 }: {
+  onPin?: () => void;
+  pinned?: boolean;
   onReply?: () => void;
   onReact?: (emoji: string) => void;
   onEdit?: () => void;
@@ -191,7 +200,7 @@ function Tools({
   onReport?: () => void;
 }) {
   const [picking, setPicking] = useState(false);
-  if (!onReply && !onReact && !onEdit && !onDelete && !onReport) return null;
+  if (!onReply && !onReact && !onEdit && !onDelete && !onReport && !onPin) return null;
   return (
     <span className="msg-tools">
       {onReact && (
@@ -222,6 +231,16 @@ function Tools({
           ↩
         </button>
       )}
+      {onPin && (
+        <button
+          type="button"
+          title={pinned ? 'Unpin' : 'Pin to the top of the room'}
+          aria-label={pinned ? 'Unpin message' : 'Pin message'}
+          onClick={onPin}
+        >
+          {pinned ? '📍' : '📌'}
+        </button>
+      )}
       {onEdit && (
         <button type="button" title="Edit" aria-label="Edit message" onClick={onEdit}>
           ✎
@@ -244,14 +263,14 @@ function Tools({
 function renderText(text: string, onEnqueue?: (url: string) => void) {
   return linkify(text).map((seg, i) => {
     if (seg.type === 'text') return <span key={i}>{seg.value}</span>;
-    const media = classify(seg.value);
+    const media = parseMediaUrl(seg.value);
     return (
       <span key={i} className="url-seg">
         <a href={seg.value} target="_blank" rel="noreferrer noopener">
           {seg.value}
         </a>
-        {media.kind !== 'unknown' && onEnqueue && (
-          <button className="enqueue-btn" title="Add to watch party" onClick={() => onEnqueue(seg.value)}>
+        {media && media.provider !== 'twitch' && onEnqueue && (
+          <button className="enqueue-btn" title="Add to the room's queue" onClick={() => onEnqueue(seg.value)}>
             ＋ queue
           </button>
         )}
