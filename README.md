@@ -193,7 +193,7 @@ The tests start throwaway servers with empty databases and never touch real data
 
 ## Credits
 
-* Original QChat: the community who made it fun, 2002 onward.
+* Original QChat: the community who made it fun.
 * [Bricolage Grotesque](https://github.com/ateliertriay/bricolage) typeface (SIL Open Font License), served from the site itself.
 * ENABLE word list for QWords (public domain).
 * Weather from [Open-Meteo](https://open-meteo.com) (CC BY 4.0).
