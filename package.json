@@ -2,7 +2,7 @@
   "name": "qchat-reborn",
   "version": "0.1.0",
   "private": true,
-  "description": "Web chatroom with a bundled IRC backend and synchronized media playback",
+  "description": "QChat Reborn: a real-time chat community with rooms, friends, watch-together media, a word game, bots and live video. One small Node.js app.",
   "workspaces": [
     "shared",
     "server",
